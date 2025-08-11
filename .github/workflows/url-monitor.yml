@@ -53,7 +53,30 @@ jobs:
     
     - name: Build TypeScript
       run: npm run build
-    
+
+    - name: 📊 Download previous monitoring database
+      uses: actions/download-artifact@v4
+      with:
+        name: monitoring-database
+        path: ./
+      continue-on-error: true
+
+    - name: 🔍 Check database status
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "📋 Previous database found"
+          # Install sqlite3 for database operations
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          RECORD_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "📊 Existing records: $RECORD_COUNT"
+          if [ "$RECORD_COUNT" -gt 0 ]; then
+            echo "🕐 Date range:"
+            sqlite3 monitoring.db "SELECT 'Oldest: ' || MIN(datetime(timestamp)), 'Newest: ' || MAX(datetime(timestamp)) FROM requests;" 2>/dev/null || echo "Could not read timestamps"
+          fi
+        else
+          echo "📝 No previous database found, starting fresh"
+        fi
+
     - name: Verify URLs CSV exists
       run: |
         if [ ! -f urls.csv ]; then
@@ -87,6 +110,41 @@ jobs:
         npm run start:headless
         
         echo "Monitoring completed"
+
+    - name: 🧹 Database cleanup and optimization
+      if: always()
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "🧹 Performing database cleanup..."
+          
+          # Install sqlite3 if not already installed
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          
+          # Check database size before cleanup
+          BEFORE_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "📊 Records before cleanup: $BEFORE_COUNT"
+          
+          # Keep only last 7 days of data to prevent database from growing too large
+          sqlite3 monitoring.db "DELETE FROM requests WHERE datetime(timestamp) < datetime('now', '-7 days');" 2>/dev/null || echo "No cleanup needed"
+          
+          # Optimize database
+          sqlite3 monitoring.db "VACUUM;" 2>/dev/null || echo "Could not vacuum database"
+          
+          # Check database size after cleanup
+          AFTER_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "📊 Records after cleanup: $AFTER_COUNT"
+          echo "🗑️ Removed $((BEFORE_COUNT - AFTER_COUNT)) old records"
+          
+          # Show final database stats
+          echo "📈 Final database statistics:"
+          sqlite3 monitoring.db "
+            SELECT 
+              'Total records: ' || COUNT(*),
+              'Date range: ' || MIN(datetime(timestamp)) || ' to ' || MAX(datetime(timestamp)),
+              'Database size: ' || (SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()) || ' bytes'
+            FROM requests;
+          " 2>/dev/null || echo "Could not generate statistics"
+        fi
       continue-on-error: true
     
     - name: Generate monitoring report
