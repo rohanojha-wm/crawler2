@@ -332,7 +332,7 @@
                 './api/groups.json'
             ).then(groups => {
                 // Extract URLs for the specific group from groups data
-                const group = groups.find(g => g.group === groupName);
+                const group = groups.find(g => g.group_name === groupName);
                 return group ? group.urls || [] : [];
             });
         }

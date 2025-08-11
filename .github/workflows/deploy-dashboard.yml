@@ -108,7 +108,7 @@ jobs:
                       WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
                       WHEN name LIKE '%D+%' OR name LIKE '%Discovery%' OR url LIKE '%discoveryplus%' THEN 'Discovery Plus'
                       ELSE 'Other'
-                    END as \`group\`,
+                    END as group_name,
                     COUNT(*) as total_requests,
                     ROUND(AVG(CASE WHEN success = 1 THEN 100.0 ELSE 0.0 END), 1) as success_rate,
                     ROUND(AVG(responseTime), 0) as avg_response_time,
