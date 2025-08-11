@@ -312,10 +312,13 @@
                 }
                 
                 // Fallback to static JSON file with cache busting
+                // Note: Static files don't support query parameters, so we just fetch the base file
                 const cacheBuster = Date.now();
                 const response = await fetch(`${staticFile}?v=${cacheBuster}`);
                 if (response.ok) {
-                    return await response.json();
+                    const data = await response.json();
+                    console.log('Fetched from static file:', staticFile, 'records:', data.length);
+                    return data;
                 }
                 
                 return [];
@@ -332,7 +335,7 @@
         async function fetchUrlsByGroup(groupName) {
             try {
                 // Get all results data and extract URLs for this group
-                const results = await fetchWithFallback('/api/results', './api/results.json');
+                const results = await fetchResults('-24 hours'); // This will now handle static mode properly
                 
                 console.log('fetchUrlsByGroup - Total results:', results.length, 'for group:', groupName);
                 
@@ -395,14 +398,54 @@
         }
 
         async function fetchResults(timeRange = '-24 hours', groupName = null) {
-            let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
-            if (groupName) {
-                apiUrl += `&group=${encodeURIComponent(groupName)}`;
+            try {
+                let results;
+                
+                if (isStaticMode) {
+                    // In static mode, fetch all data and filter client-side
+                    console.log('Static mode: fetching all results and filtering client-side');
+                    const cacheBuster = Date.now();
+                    const response = await fetch(`./api/results.json?v=${cacheBuster}`);
+                    if (response.ok) {
+                        const allResults = await response.json();
+                        console.log('Static mode: fetched', allResults.length, 'total results');
+                        
+                        // Filter by time range client-side
+                        const now = new Date();
+                        const timeFilterMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+                        const cutoffTime = new Date(now.getTime() - timeFilterMs);
+                        
+                        results = allResults.filter(result => {
+                            const resultTime = new Date(result.timestamp);
+                            return resultTime >= cutoffTime;
+                        });
+                        
+                        console.log('Static mode: filtered to', results.length, 'results within', timeRange);
+                    } else {
+                        console.log('Static mode: no results.json file found');
+                        results = [];
+                    }
+                } else {
+                    // In live mode, use server-side filtering
+                    let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
+                    if (groupName) {
+                        apiUrl += `&group=${encodeURIComponent(groupName)}`;
+                    }
+                    console.log('Live mode: fetching from', apiUrl);
+                    const response = await fetch(apiUrl);
+                    if (response.ok) {
+                        results = await response.json();
+                    } else {
+                        results = [];
+                    }
+                }
+                
+                console.log('fetchResults returned:', results.length, 'results for timeRange:', timeRange, 'groupName:', groupName);
+                return results;
+            } catch (error) {
+                console.error('Error in fetchResults:', error);
+                return [];
             }
-            console.log('Fetching results from:', apiUrl, 'fallback: ./api/results.json');
-            const results = await fetchWithFallback(apiUrl, './api/results.json');
-            console.log('fetchResults returned:', results.length, 'results');
-            return results;
         }
 
         function getStatusColor(status) {
