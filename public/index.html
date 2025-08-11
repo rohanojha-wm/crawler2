@@ -334,7 +334,9 @@
                 // Get all results data and extract URLs for this group
                 const results = await fetchWithFallback('/api/results', './api/results.json');
                 
-                // Filter results by group and get unique URLs
+                console.log('fetchUrlsByGroup - Total results:', results.length, 'for group:', groupName);
+                
+                // Filter results by group and calculate stats per URL
                 const groupUrls = new Map();
                 
                 results.forEach(result => {
@@ -346,14 +348,38 @@
                     }
                     
                     if (resultGroup === groupName) {
-                        groupUrls.set(result.url, {
-                            name: result.name,
-                            url: result.url
-                        });
+                        const urlKey = result.url;
+                        if (!groupUrls.has(urlKey)) {
+                            groupUrls.set(urlKey, {
+                                name: result.name,
+                                url: result.url,
+                                total_requests: 0,
+                                successful_requests: 0,
+                                total_response_time: 0,
+                                success_rate: 0,
+                                avg_response_time: 0
+                            });
+                        }
+                        
+                        const urlStats = groupUrls.get(urlKey);
+                        urlStats.total_requests++;
+                        urlStats.total_response_time += result.responseTime || 0;
+                        
+                        if (result.success || (result.status >= 200 && result.status < 300)) {
+                            urlStats.successful_requests++;
+                        }
                     }
                 });
                 
-                return Array.from(groupUrls.values());
+                // Calculate final stats
+                const urlsArray = Array.from(groupUrls.values()).map(url => {
+                    url.success_rate = url.total_requests > 0 ? (url.successful_requests / url.total_requests) * 100 : 0;
+                    url.avg_response_time = url.total_requests > 0 ? url.total_response_time / url.total_requests : 0;
+                    return url;
+                });
+                
+                console.log('fetchUrlsByGroup - URLs found:', urlsArray.length, urlsArray);
+                return urlsArray;
             } catch (error) {
                 console.error('Error fetching URLs by group:', error);
                 return [];
@@ -495,7 +521,7 @@
             const ctx = document.getElementById('responseTimeChart').getContext('2d');
             const results = await fetchResults('-24 hours', selectedGroup);
             
-            console.log('Results fetched:', results.length, 'records');
+            console.log('Results fetched:', results.length, 'records', 'for group:', selectedGroup);
             
             if (responseTimeChart) {
                 responseTimeChart.destroy();
@@ -515,6 +541,20 @@
                     return;
                 }
                 
+                // Filter by group if a group is selected
+                if (selectedGroup) {
+                    let resultGroup = 'Other';
+                    if (result.name.includes('Max') || result.url.includes('max.com')) {
+                        resultGroup = 'Max Streaming';
+                    } else if (result.name.includes('D+') || result.name.includes('Discovery') || result.url.includes('discoveryplus')) {
+                        resultGroup = 'Discovery Plus';
+                    }
+                    
+                    if (resultGroup !== selectedGroup) {
+                        return; // Skip results not in selected group
+                    }
+                }
+                
                 if (!groupedData[result.name]) {
                     groupedData[result.name] = [];
                 }
@@ -532,7 +572,7 @@
                 });
             });
 
-            console.log('Grouped data:', Object.keys(groupedData), groupedData);
+            console.log('Grouped data:', Object.keys(groupedData), 'datasets found');
 
             const datasets = Object.keys(groupedData).map((name, index) => ({
                 label: name,
@@ -602,6 +642,8 @@
             const ctx = document.getElementById('statusCodeChart').getContext('2d');
             const results = await fetchResults('-24 hours', selectedGroup);
             
+            console.log('Status chart - Results fetched:', results.length, 'records', 'for group:', selectedGroup);
+            
             if (statusCodeChart) {
                 statusCodeChart.destroy();
             }
@@ -619,6 +661,20 @@
                 if (!result.name || !result.timestamp || result.status === undefined) {
                     console.warn('Skipping invalid result for status chart:', result);
                     return;
+                }
+                
+                // Filter by group if a group is selected
+                if (selectedGroup) {
+                    let resultGroup = 'Other';
+                    if (result.name.includes('Max') || result.url.includes('max.com')) {
+                        resultGroup = 'Max Streaming';
+                    } else if (result.name.includes('D+') || result.name.includes('Discovery') || result.url.includes('discoveryplus')) {
+                        resultGroup = 'Discovery Plus';
+                    }
+                    
+                    if (resultGroup !== selectedGroup) {
+                        return; // Skip results not in selected group
+                    }
                 }
                 
                 if (!groupedData[result.name]) {
@@ -642,6 +698,8 @@
             Object.keys(groupedData).forEach(name => {
                 groupedData[name].sort((a, b) => a.x - b.x);
             });
+
+            console.log('Status chart - Grouped data:', Object.keys(groupedData), 'datasets found');
 
             const datasets = Object.keys(groupedData).map((name, index) => ({
                 label: name,
