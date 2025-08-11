@@ -53,7 +53,7 @@ jobs:
         cat urls.csv
     
     - name: Run monitoring
-      timeout-minutes: ${{ github.event.inputs.duration }}
+      timeout-minutes: ${{ fromJSON(github.event.inputs.duration) }}
       run: |
         export URLS_CSV_PATH="./urls.csv"
         export HEADLESS="true"

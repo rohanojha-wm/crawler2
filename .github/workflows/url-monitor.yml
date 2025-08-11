@@ -65,7 +65,7 @@ jobs:
         cat urls.csv
     
     - name: Run URL monitoring
-      timeout-minutes: ${{ github.event.inputs.duration || '3' }}
+      timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '3') }}
       run: |
         echo "Starting URL monitoring for ${{ github.event.inputs.duration || '3' }} minutes..."
         echo "Check interval: ${{ github.event.inputs.interval || '30' }} seconds"
