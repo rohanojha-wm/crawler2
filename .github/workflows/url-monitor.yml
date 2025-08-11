@@ -30,6 +30,10 @@ on:
 env:
   NODE_VERSION: '18'
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   url-monitor:
     runs-on: ubuntu-latest
@@ -149,22 +153,12 @@ jobs:
           monitoring-report.md
         retention-days: 30
 
-    - name: 🚀 Trigger Dashboard Update
+    - name: ✅ Monitoring Complete
       if: always()
-      uses: actions/github-script@v7
-      with:
-        script: |
-          // Immediately trigger dashboard deployment after monitoring completes
-          await github.rest.actions.createWorkflowDispatch({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            workflow_id: 'deploy-dashboard.yml',
-            ref: 'main',
-            inputs: {
-              force_deploy: 'true'
-            }
-          });
-          console.log('🌐 Dashboard deployment triggered immediately');
+      run: |
+        echo "🎯 URL monitoring cycle completed"
+        echo "📊 Database artifact uploaded for dashboard use" 
+        echo "🔄 Dashboard will update automatically via workflow_run trigger"
     
     - name: Comment PR with results
       if: github.event_name == 'pull_request' && always()

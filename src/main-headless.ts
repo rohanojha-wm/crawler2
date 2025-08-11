@@ -21,10 +21,22 @@ class Application {
     }
   }
 
-  start(): void {
+  async start(): Promise<void> {
     console.log('🚀 Starting URL Monitor Application...');
     
-    // Start monitoring URLs
+    // Check if we're in single-pass mode
+    const singlePass = process.env.SINGLE_PASS === 'true';
+    
+    if (singlePass) {
+      // For single-pass mode, run once and exit
+      console.log('🔄 Single-pass mode: Checking all URLs once');
+      await this.monitor.runSingleCheck();
+      console.log('✅ Single-pass monitoring completed, exiting...');
+      process.exit(0);
+      return;
+    }
+    
+    // Start monitoring URLs (continuous mode)
     this.monitor.startMonitoring();
     
     // Start web dashboard only if not headless
@@ -58,7 +70,7 @@ class Application {
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   try {
     // Check if running in CI/headless mode
     const isCI = process.env.CI === 'true' || process.env.NODE_ENV === 'production';
@@ -105,10 +117,10 @@ async function main() {
     }
 
     // Start the application
-    app.start();
+    await app.start();
     
-    // In headless mode, log stats periodically
-    if (isHeadless) {
+    // In headless continuous mode, log stats periodically
+    if (isHeadless && process.env.SINGLE_PASS !== 'true') {
       setInterval(async () => {
         try {
           const stats = await app.getStats();
