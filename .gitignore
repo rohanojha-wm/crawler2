@@ -7,8 +7,9 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+static-dashboard/
 
-# Database files
+# Database files (comment out if you want to commit initial empty DB)
 *.db
 *.sqlite
 *.sqlite3
@@ -51,3 +52,7 @@ temp/
 # Backup files
 *-backup.*
 *.backup
+
+# GitHub Pages deployment artifacts
+_site/
+.jekyll-cache/
