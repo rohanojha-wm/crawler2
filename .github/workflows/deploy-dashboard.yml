@@ -10,11 +10,19 @@ on:
         description: 'Force dashboard regeneration'
         required: false
         default: 'false'
-  # Also trigger after successful monitoring runs
+  # Trigger immediately after successful monitoring runs
   workflow_run:
     workflows: ["URL Monitor"]
     types:
       - completed
+    branches: [main]
+  # Also trigger on any push (for immediate updates during development)
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - '.github/workflows/url-monitor.yml'
 
 permissions:
   contents: read
