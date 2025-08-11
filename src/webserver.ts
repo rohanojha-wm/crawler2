@@ -33,31 +33,6 @@ export class WebServer {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import { Database } from './database';
-
-export class WebServer {
-  private readonly app: express.Application;
-  private readonly database: Database;
-  private server: any;
-
-  constructor(database: Database, port: number = 3000) {
-    this.app = express();
-    this.database = database;
-    this.setupMiddleware();
-    this.setupRoutes();
-  }
-
-  private setupMiddleware(): void {
-    this.app.use(cors());
-    this.app.use(express.json());
-    this.app.use(express.static(path.join(__dirname, '../public')));
-  }
-
-  private setupRoutes(): void {
-    // API Routes
     this.app.get('/api/stats', async (req, res) => {
       try {
         const stats = await this.database.getStats();
@@ -130,17 +105,6 @@ export class WebServer {
     // Serve the dashboard
   }
 
-  // Serve the dashboard and failed requests page
-  // These should be in the constructor after setupRoutes()
-  // (or as their own method called from the constructor)
-  // Add these after setupRoutes() is called in the constructor
-  //
-  // constructor(database: Database, port: number = 3000) {
-  //   ...
-  //   this.setupRoutes();
-  //   this.setupStaticRoutes();
-  // }
-  //
   private setupStaticRoutes(): void {
     this.app.get('/', (req, res) => {
       res.sendFile(path.join(__dirname, '../public/index.html'));
