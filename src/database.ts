@@ -1,7 +1,44 @@
+
 import sqlite3 from 'sqlite3';
 import { RequestResult } from './types';
 
 export class Database {
+  // Returns: [{ group_name, countryCode, urls: [UrlConfig] }]
+  async getGroupHierarchy(): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const query = `
+        SELECT 
+          COALESCE(group_name, 'Ungrouped') as group_name,
+          COALESCE(countryCode, 'Unknown') as countryCode,
+          name, url
+        FROM requests
+        GROUP BY group_name, countryCode, name, url
+        ORDER BY group_name, countryCode, name
+      `;
+      this.db.all(query, [], (err: any, rows: any[]) => {
+        if (err) return reject(new Error(err));
+        // Build hierarchy: group -> countryCode -> urls[]
+        const result: any = {};
+        for (const row of rows) {
+          if (!result[row.group_name]) result[row.group_name] = {};
+          if (!result[row.group_name][row.countryCode]) result[row.group_name][row.countryCode] = [];
+          result[row.group_name][row.countryCode].push({ name: row.name, url: row.url });
+        }
+        // Convert to array
+        const hierarchy: any[] = [];
+        for (const group_name of Object.keys(result)) {
+          for (const countryCode of Object.keys(result[group_name])) {
+            hierarchy.push({
+              group_name,
+              countryCode,
+              urls: result[group_name][countryCode]
+            });
+          }
+        }
+        resolve(hierarchy);
+      });
+    });
+  }
   private readonly db: sqlite3.Database;
 
   constructor(dbPath: string = './monitoring.db') {
@@ -61,6 +98,7 @@ export class Database {
       );
     });
   }
+
 
   async getResults(timeRange?: string, urlName?: string, groupName?: string): Promise<RequestResult[]> {
     return new Promise((resolve, reject) => {
