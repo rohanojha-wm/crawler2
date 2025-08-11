@@ -7,7 +7,8 @@
     <meta name="description" content="Real-time URL monitoring dashboard with response times and status tracking">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>📊</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1"></script>
     <style>
         * {
             margin: 0;
@@ -508,12 +509,26 @@
 
             const groupedData = {};
             results.forEach(result => {
+                // Ensure we have valid data
+                if (!result.name || !result.timestamp || result.responseTime === undefined) {
+                    console.warn('Skipping invalid result:', result);
+                    return;
+                }
+                
                 if (!groupedData[result.name]) {
                     groupedData[result.name] = [];
                 }
+                
+                // Ensure timestamp is a valid date
+                const timestamp = new Date(result.timestamp);
+                if (isNaN(timestamp.getTime())) {
+                    console.warn('Invalid timestamp:', result.timestamp);
+                    return;
+                }
+                
                 groupedData[result.name].push({
-                    x: new Date(result.timestamp),
-                    y: result.responseTime
+                    x: timestamp,
+                    y: result.responseTime || 0
                 });
             });
 
@@ -524,53 +539,75 @@
                 data: groupedData[name],
                 borderColor: `hsl(${index * 60}, 70%, 50%)`,
                 backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
-                tension: 0.4
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6
             }));
 
             console.log('Creating chart with datasets:', datasets.length, 'datasets');
 
-            responseTimeChart = new Chart(ctx, {
-                type: 'line',
-                data: { datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: {
-                                unit: 'hour',
-                                displayFormats: {
-                                    hour: 'MMM dd HH:mm'
+            try {
+                responseTimeChart = new Chart(ctx, {
+                    type: 'line',
+                    data: { datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            intersect: false,
+                            mode: 'index'
+                        },
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'hour',
+                                    displayFormats: {
+                                        hour: 'MMM dd HH:mm'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Time'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Response Time (ms)'
                                 }
                             }
                         },
-                        y: {
-                            beginAtZero: true,
+                        plugins: {
+                            legend: {
+                                position: 'top'
+                            },
                             title: {
                                 display: true,
-                                text: 'Response Time (ms)'
+                                text: selectedGroup ? `Response Time - ${selectedGroup}` : 'Response Time - All URLs'
                             }
                         }
-                    },
-                    plugins: {
-                        legend: {
-                            position: 'top'
-                        },
-                        title: {
-                            display: true,
-                            text: selectedGroup ? `Response Time - ${selectedGroup}` : 'Response Time - All URLs'
-                        }
                     }
-                }
-            });
+                });
+                console.log('Response time chart created successfully');
+            } catch (error) {
+                console.error('Error creating response time chart:', error);
+                ctx.fillText('Chart creation failed: ' + error.message, 10, 50);
+            }
         }
 
         async function createStatusCodeChart() {
+            console.log('Creating status code chart...');
             const ctx = document.getElementById('statusCodeChart').getContext('2d');
             const results = await fetchResults('-24 hours', selectedGroup);
             
+            if (statusCodeChart) {
+                statusCodeChart.destroy();
+            }
+            
             if (results.length === 0) {
+                console.log('No data available for status chart');
                 ctx.fillText('No data available', 10, 50);
                 return;
             }
@@ -578,12 +615,26 @@
             // Group by URL and organize status codes over time
             const groupedData = {};
             results.forEach(result => {
+                // Ensure we have valid data
+                if (!result.name || !result.timestamp || result.status === undefined) {
+                    console.warn('Skipping invalid result for status chart:', result);
+                    return;
+                }
+                
                 if (!groupedData[result.name]) {
                     groupedData[result.name] = [];
                 }
+                
+                // Ensure timestamp is a valid date
+                const timestamp = new Date(result.timestamp);
+                if (isNaN(timestamp.getTime())) {
+                    console.warn('Invalid timestamp in status chart:', result.timestamp);
+                    return;
+                }
+                
                 groupedData[result.name].push({
-                    x: new Date(result.timestamp),
-                    y: result.status
+                    x: timestamp,
+                    y: result.status || 0
                 });
             });
 
@@ -600,85 +651,88 @@
                 tension: 0.1,
                 fill: false,
                 pointBackgroundColor: function(context) {
-                    const status = context.parsed.y;
+                    const status = context.parsed ? context.parsed.y : 0;
                     return getStatusColor(status);
                 },
                 pointBorderColor: function(context) {
-                    const status = context.parsed.y;
+                    const status = context.parsed ? context.parsed.y : 0;
                     return getStatusColor(status);
                 },
-                pointRadius: 4
+                pointRadius: 4,
+                pointHoverRadius: 6
             }));
 
-            if (statusCodeChart) {
-                statusCodeChart.destroy();
-            }
-
-            statusCodeChart = new Chart(ctx, {
-                type: 'line',
-                data: { datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        intersect: false,
-                        mode: 'index'
-                    },
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: {
-                                unit: 'hour',
-                                displayFormats: {
-                                    hour: 'MMM dd HH:mm'
+            try {
+                statusCodeChart = new Chart(ctx, {
+                    type: 'line',
+                    data: { datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            intersect: false,
+                            mode: 'index'
+                        },
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'hour',
+                                    displayFormats: {
+                                        hour: 'MMM dd HH:mm'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Time'
                                 }
                             },
-                            title: {
-                                display: true,
-                                text: 'Time'
-                            }
-                        },
-                        y: {
-                            title: {
-                                display: true,
-                                text: 'HTTP Status Code'
-                            },
-                            min: 0,
-                            max: 600,
-                            ticks: {
-                                stepSize: 100,
-                                callback: function(value) {
-                                    // Show major status code ranges
-                                    if (value === 0) return '0 (Failed)';
-                                    if (value === 200) return '200 (Success)';
-                                    if (value === 300) return '300 (Redirect)';
-                                    if (value === 400) return '400 (Client Error)';
-                                    if (value === 500) return '500 (Server Error)';
-                                    return value;
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'HTTP Status Code'
+                                },
+                                min: 0,
+                                max: 600,
+                                ticks: {
+                                    stepSize: 100,
+                                    callback: function(value) {
+                                        // Show major status code ranges
+                                        if (value === 0) return '0 (Failed)';
+                                        if (value === 200) return '200 (Success)';
+                                        if (value === 300) return '300 (Redirect)';
+                                        if (value === 400) return '400 (Client Error)';
+                                        if (value === 500) return '500 (Server Error)';
+                                        return value;
+                                    }
                                 }
                             }
-                        }
-                    },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: selectedGroup ? `Status Codes Over Time - ${selectedGroup}` : 'Status Codes Over Time - All URLs'
                         },
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const status = context.parsed.y;
-                                    return `${context.dataset.label}: ${status} (${getStatusText(status)})`;
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: selectedGroup ? `Status Codes Over Time - ${selectedGroup}` : 'Status Codes Over Time - All URLs'
+                            },
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const status = context.parsed ? context.parsed.y : 0;
+                                        return `${context.dataset.label}: ${status} (${getStatusText(status)})`;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+                console.log('Status code chart created successfully');
+            } catch (error) {
+                console.error('Error creating status code chart:', error);
+                ctx.fillText('Chart creation failed: ' + error.message, 10, 50);
+            }
         }
 
         async function refreshData() {
