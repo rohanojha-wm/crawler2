@@ -309,8 +309,9 @@
                     }
                 }
                 
-                // Fallback to static JSON file
-                const response = await fetch(staticFile);
+                // Fallback to static JSON file with cache busting
+                const cacheBuster = Date.now();
+                const response = await fetch(`${staticFile}?v=${cacheBuster}`);
                 if (response.ok) {
                     return await response.json();
                 }

@@ -129,7 +129,7 @@ jobs:
                     id,
                     url,
                     name,
-                    datetime(timestamp) as timestamp,
+                    timestamp,
                     status,
                     responseTime,
                     success,
@@ -159,7 +159,7 @@ jobs:
                     id,
                     url,
                     name,
-                    datetime(timestamp) as timestamp,
+                    timestamp,
                     status,
                     responseTime,
                     error
