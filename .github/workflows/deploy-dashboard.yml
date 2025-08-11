@@ -10,6 +10,10 @@ on:
         description: 'Force dashboard regeneration'
         required: false
         default: 'false'
+      time_range_hours:
+        description: 'Hours of historical data to include (default: 24)'
+        required: false
+        default: '24'
   # Trigger immediately after successful monitoring runs
   workflow_run:
     workflows: ["URL Monitor"]
@@ -89,6 +93,10 @@ jobs:
           if [ -f "monitoring.db" ]; then
             echo "📊 Database found, generating static API data..."
             
+            # Set time range (default 24 hours, configurable via workflow input)
+            TIME_RANGE="${{ github.event.inputs.time_range_hours || '24' }}"
+            echo "🕐 Using time range: $TIME_RANGE hours"
+            
             # Install sqlite3 for data extraction
             sudo apt-get update && sudo apt-get install -y sqlite3
             
@@ -114,7 +122,7 @@ jobs:
                     ROUND(AVG(responseTime), 0) as avg_response_time,
                     COUNT(DISTINCT url) as url_count
                   FROM requests 
-                  WHERE timestamp >= datetime('now', '-24 hours')
+                  WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
                   GROUP BY 
                     CASE 
                       WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
@@ -123,7 +131,7 @@ jobs:
                     END
                 " > static-dashboard/api/groups.json
                 
-                # Generate recent results data
+                # Generate recent results data (more records for better charts)
                 sqlite3 -json monitoring.db "
                   SELECT 
                     id,
@@ -135,9 +143,9 @@ jobs:
                     success,
                     error
                   FROM requests 
-                  WHERE timestamp >= datetime('now', '-24 hours')
+                  WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
                   ORDER BY timestamp DESC 
-                  LIMIT 1000
+                  LIMIT 5000
                 " > static-dashboard/api/results.json
                 
                 # Generate status codes data
@@ -148,7 +156,7 @@ jobs:
                     name,
                     url
                   FROM requests 
-                  WHERE timestamp >= datetime('now', '-24 hours')
+                  WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
                   GROUP BY status, name, url
                   ORDER BY status, count DESC
                 " > static-dashboard/api/status-codes.json
@@ -164,7 +172,7 @@ jobs:
                     responseTime,
                     error
                   FROM requests 
-                  WHERE success = 0 AND timestamp >= datetime('now', '-24 hours')
+                  WHERE success = 0 AND datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
                   ORDER BY timestamp DESC
                 " > static-dashboard/api/failed-requests.json
                 

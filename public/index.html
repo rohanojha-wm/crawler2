@@ -256,6 +256,15 @@
             <div class="nav-buttons">
                 <button class="nav-btn refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
                 <a href="failed-requests.html" class="nav-btn" style="text-decoration: none; display: inline-block;">🚨 Failed Requests</a>
+                <select id="timeRangeSelector" class="nav-btn" style="background: linear-gradient(45deg, #ff6b6b, #ee5a6f); border: none; color: white;" onchange="changeTimeRange()">
+                    <option value="1">⏰ Last 1 Hour</option>
+                    <option value="6">⏰ Last 6 Hours</option>
+                    <option value="12">⏰ Last 12 Hours</option>
+                    <option value="24" selected>⏰ Last 24 Hours</option>
+                    <option value="48">⏰ Last 48 Hours</option>
+                    <option value="72">⏰ Last 3 Days</option>
+                    <option value="168">⏰ Last 7 Days</option>
+                </select>
                 <span id="modeIndicator" class="nav-btn" style="background: linear-gradient(45deg, #17a2b8, #20c997); cursor: default;">
                     📡 Detecting mode...
                 </span>
@@ -294,6 +303,7 @@
         let statusCodeChart;
         let currentView = 'groups'; // 'groups' or 'urls'
         let selectedGroup = null;
+        let timeRangeHours = 24; // Default 24 hours, configurable
 
         // Detect if we're running in static mode (GitHub Pages) or with live API
         const isStaticMode = window.location.hostname.includes('github.io') || 
@@ -410,9 +420,9 @@
                         const allResults = await response.json();
                         console.log('Static mode: fetched', allResults.length, 'total results');
                         
-                        // Filter by time range client-side
+                        // Filter by time range client-side using configurable hours
                         const now = new Date();
-                        const timeFilterMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+                        const timeFilterMs = timeRangeHours * 60 * 60 * 1000; // Convert hours to milliseconds
                         const cutoffTime = new Date(now.getTime() - timeFilterMs);
                         
                         results = allResults.filter(result => {
@@ -420,7 +430,7 @@
                             return resultTime >= cutoffTime;
                         });
                         
-                        console.log('Static mode: filtered to', results.length, 'results within', timeRange);
+                        console.log('Static mode: filtered to', results.length, 'results within last', timeRangeHours, 'hours');
                     } else {
                         console.log('Static mode: no results.json file found');
                         results = [];
@@ -557,6 +567,34 @@
             // Update charts to show all URLs
             createResponseTimeChart();
             createStatusCodeChart();
+        }
+
+        function changeTimeRange() {
+            const selector = document.getElementById('timeRangeSelector');
+            timeRangeHours = parseInt(selector.value);
+            console.log('Time range changed to:', timeRangeHours, 'hours');
+            
+            // Update chart titles
+            const responseChartTitle = document.querySelector('.charts-container .chart-card:first-child h3');
+            const statusChartTitle = document.querySelector('.charts-container .chart-card:last-child h3');
+            
+            // Simple time text mapping
+            const timeTextMap = {
+                1: '1 Hour',
+                6: '6 Hours', 
+                12: '12 Hours',
+                24: '24 Hours',
+                48: '48 Hours',
+                72: '3 Days',
+                168: '7 Days'
+            };
+            const timeText = timeTextMap[timeRangeHours] || `${timeRangeHours} Hours`;
+            
+            responseChartTitle.textContent = `📊 Response Times by Group (Last ${timeText})`;
+            statusChartTitle.textContent = `🚦 Status Code Distribution (Last ${timeText})`;
+            
+            // Refresh all data with new time range
+            refreshData();
         }
 
         async function createResponseTimeChart() {
