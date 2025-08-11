@@ -329,14 +329,37 @@
     </div>
 
     <script>
-        async function fetchFailedRequests(timeRange = '-24 hours') {
+        // Detect if we're running in static mode (GitHub Pages) or with live API
+        const isStaticMode = window.location.hostname.includes('github.io') || 
+                           window.location.protocol === 'file:' ||
+                           !window.location.port;
+
+        async function fetchWithFallback(apiPath, staticFile) {
             try {
-                const response = await fetch(`/api/failed-requests?timeRange=${encodeURIComponent(timeRange)}`);
-                return await response.json();
+                // Try live API first
+                if (!isStaticMode) {
+                    const response = await fetch(apiPath);
+                    if (response.ok) {
+                        return await response.json();
+                    }
+                }
+                
+                // Fallback to static JSON file
+                const response = await fetch(staticFile);
+                if (response.ok) {
+                    return await response.json();
+                }
+                
+                return [];
             } catch (error) {
-                console.error('Error fetching failed requests:', error);
+                console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
                 return [];
             }
+        }
+
+        async function fetchFailedRequests(timeRange = '-24 hours') {
+            let apiUrl = `/api/failed-requests?timeRange=${encodeURIComponent(timeRange)}`;
+            return await fetchWithFallback(apiUrl, './api/failed-requests.json');
         }
 
         function getStatusBadgeClass(status) {

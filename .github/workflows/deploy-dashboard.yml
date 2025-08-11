@@ -10,6 +10,11 @@ on:
         description: 'Force dashboard regeneration'
         required: false
         default: 'false'
+  # Also trigger after successful monitoring runs
+  workflow_run:
+    workflows: ["🔍 URL Monitor"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -39,23 +44,78 @@ jobs:
       - name: 🏗️ Build TypeScript
         run: npm run build
 
-      - name: 📊 Generate monitoring data
-        run: |
-          timeout 300 npm run start:headless || true
-          ls -la *.db || echo "No database found yet"
+      - name: 📊 Download latest database
+        uses: actions/download-artifact@v4
+        with:
+          name: monitoring-database
+          path: ./
+        continue-on-error: true
 
-      - name: 🎨 Generate static dashboard
+      - name: 🎨 Generate static dashboard with data
         run: |
-          # Create public directory with updated data
+          # Create static dashboard directory
           mkdir -p static-dashboard
           cp -r public/* static-dashboard/
           
-          # If database exists, we could generate static JSON files here
+          # Generate API data files if database exists
           if [ -f "monitoring.db" ]; then
-            echo "Database found, dashboard will have real data"
+            echo "📊 Generating static API data from database..."
+            
+            # Create API directory
+            mkdir -p static-dashboard/api
+            
+            # Generate static API responses
+            node -e "
+              const express = require('express');
+              const fs = require('fs');
+              const path = require('path');
+              
+              // Import our API routes (we'll extract the logic)
+              const { Database } = require('./dist/database');
+              
+              async function generateStaticAPI() {
+                const db = new Database();
+                await db.initialize();
+                
+                try {
+                  // Generate groups data
+                  const groups = await db.getGroupStats();
+                  fs.writeFileSync('static-dashboard/api/groups.json', JSON.stringify(groups, null, 2));
+                  
+                  // Generate results data
+                  const results = await db.getResults();
+                  fs.writeFileSync('static-dashboard/api/results.json', JSON.stringify(results, null, 2));
+                  
+                  // Generate status codes data
+                  const statusCodes = await db.getStatusCodes();
+                  fs.writeFileSync('static-dashboard/api/status-codes.json', JSON.stringify(statusCodes, null, 2));
+                  
+                  // Generate failed requests data
+                  const failedRequests = await db.getFailedRequests();
+                  fs.writeFileSync('static-dashboard/api/failed-requests.json', JSON.stringify(failedRequests, null, 2));
+                  
+                  console.log('✅ Static API files generated successfully');
+                } catch (error) {
+                  console.error('Error generating static API:', error);
+                } finally {
+                  db.close();
+                }
+              }
+              
+              generateStaticAPI();
+            "
           else
-            echo "No database yet, dashboard will show 'Loading...' until first monitoring cycle"
+            echo "📝 No database found, creating empty API responses..."
+            mkdir -p static-dashboard/api
+            echo '[]' > static-dashboard/api/groups.json
+            echo '[]' > static-dashboard/api/results.json
+            echo '[]' > static-dashboard/api/status-codes.json
+            echo '[]' > static-dashboard/api/failed-requests.json
           fi
+          fi
+          
+          # Add timestamp to dashboard
+          echo "<!-- Last updated: $(date -u) -->" >> static-dashboard/index.html
 
       - name: 📤 Setup Pages
         uses: actions/configure-pages@v4
@@ -68,3 +128,11 @@ jobs:
       - name: 🌐 Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: 📝 Summary
+        run: |
+          echo "🌐 **Dashboard deployed successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Dashboard URL:** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "🔄 **Last updated:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "📁 **Files deployed:** $(ls -la static-dashboard/ | wc -l) files" >> $GITHUB_STEP_SUMMARY

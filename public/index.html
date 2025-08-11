@@ -255,6 +255,9 @@
             <div class="nav-buttons">
                 <button class="nav-btn refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
                 <a href="failed-requests.html" class="nav-btn" style="text-decoration: none; display: inline-block;">🚨 Failed Requests</a>
+                <span id="modeIndicator" class="nav-btn" style="background: linear-gradient(45deg, #17a2b8, #20c997); cursor: default;">
+                    📡 Detecting mode...
+                </span>
             </div>
         </div>
 
@@ -291,52 +294,63 @@
         let currentView = 'groups'; // 'groups' or 'urls'
         let selectedGroup = null;
 
-        async function fetchGroups() {
+        // Detect if we're running in static mode (GitHub Pages) or with live API
+        const isStaticMode = window.location.hostname.includes('github.io') || 
+                           window.location.protocol === 'file:' ||
+                           !window.location.port;
+
+        async function fetchWithFallback(apiPath, staticFile) {
             try {
-                const response = await fetch('/api/groups');
-                return await response.json();
+                // Try live API first
+                if (!isStaticMode) {
+                    const response = await fetch(apiPath);
+                    if (response.ok) {
+                        return await response.json();
+                    }
+                }
+                
+                // Fallback to static JSON file
+                const response = await fetch(staticFile);
+                if (response.ok) {
+                    return await response.json();
+                }
+                
+                return [];
             } catch (error) {
-                console.error('Error fetching groups:', error);
+                console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
                 return [];
             }
+        }
+
+        async function fetchGroups() {
+            return await fetchWithFallback('/api/groups', './api/groups.json');
         }
 
         async function fetchUrlsByGroup(groupName) {
-            try {
-                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/urls`);
-                return await response.json();
-            } catch (error) {
-                console.error('Error fetching URLs by group:', error);
-                return [];
-            }
+            return await fetchWithFallback(
+                `/api/groups/${encodeURIComponent(groupName)}/urls`,
+                './api/groups.json'
+            ).then(groups => {
+                // Extract URLs for the specific group from groups data
+                const group = groups.find(g => g.group === groupName);
+                return group ? group.urls || [] : [];
+            });
         }
 
         async function fetchStatusCodes(timeRange = '-24 hours', groupName = null) {
-            try {
-                let url = `/api/status-codes?timeRange=${encodeURIComponent(timeRange)}`;
-                if (groupName) {
-                    url += `&group=${encodeURIComponent(groupName)}`;
-                }
-                const response = await fetch(url);
-                return await response.json();
-            } catch (error) {
-                console.error('Error fetching status codes:', error);
-                return [];
+            let apiUrl = `/api/status-codes?timeRange=${encodeURIComponent(timeRange)}`;
+            if (groupName) {
+                apiUrl += `&group=${encodeURIComponent(groupName)}`;
             }
+            return await fetchWithFallback(apiUrl, './api/status-codes.json');
         }
 
         async function fetchResults(timeRange = '-24 hours', groupName = null) {
-            try {
-                let url = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
-                if (groupName) {
-                    url += `&group=${encodeURIComponent(groupName)}`;
-                }
-                const response = await fetch(url);
-                return await response.json();
-            } catch (error) {
-                console.error('Error fetching results:', error);
-                return [];
+            let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
+            if (groupName) {
+                apiUrl += `&group=${encodeURIComponent(groupName)}`;
             }
+            return await fetchWithFallback(apiUrl, './api/results.json');
         }
 
         function getStatusColor(status) {
@@ -656,6 +670,18 @@
 
         // Initial load
         async function initialize() {
+            // Update mode indicator
+            const modeIndicator = document.getElementById('modeIndicator');
+            if (isStaticMode) {
+                modeIndicator.innerHTML = '🌐 Static Mode (GitHub Pages)';
+                modeIndicator.style.background = 'linear-gradient(45deg, #6f42c1, #e83e8c)';
+                modeIndicator.title = 'Running on GitHub Pages with data refreshed every 15 minutes';
+            } else {
+                modeIndicator.innerHTML = '⚡ Live Mode';
+                modeIndicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+                modeIndicator.title = 'Connected to live API with real-time data';
+            }
+
             const groups = await fetchGroups();
             renderGroups(groups);
             await createResponseTimeChart();
@@ -664,8 +690,9 @@
 
         initialize();
 
-        // Auto-refresh every 30 seconds
-        setInterval(refreshData, 30000);
+        // Auto-refresh every 30 seconds (more frequently in live mode)
+        const refreshInterval = isStaticMode ? 60000 : 30000; // 1 min for static, 30s for live
+        setInterval(refreshData, refreshInterval);
     </script>
 </body>
 </html>
