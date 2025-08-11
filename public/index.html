@@ -328,14 +328,34 @@
         }
 
         async function fetchUrlsByGroup(groupName) {
-            return await fetchWithFallback(
-                `/api/groups/${encodeURIComponent(groupName)}/urls`,
-                './api/groups.json'
-            ).then(groups => {
-                // Extract URLs for the specific group from groups data
-                const group = groups.find(g => g.group_name === groupName);
-                return group ? group.urls || [] : [];
-            });
+            try {
+                // Get all results data and extract URLs for this group
+                const results = await fetchWithFallback('/api/results', './api/results.json');
+                
+                // Filter results by group and get unique URLs
+                const groupUrls = new Map();
+                
+                results.forEach(result => {
+                    let resultGroup = 'Other';
+                    if (result.name.includes('Max') || result.url.includes('max.com')) {
+                        resultGroup = 'Max Streaming';
+                    } else if (result.name.includes('D+') || result.name.includes('Discovery') || result.url.includes('discoveryplus')) {
+                        resultGroup = 'Discovery Plus';
+                    }
+                    
+                    if (resultGroup === groupName) {
+                        groupUrls.set(result.url, {
+                            name: result.name,
+                            url: result.url
+                        });
+                    }
+                });
+                
+                return Array.from(groupUrls.values());
+            } catch (error) {
+                console.error('Error fetching URLs by group:', error);
+                return [];
+            }
         }
 
         async function fetchStatusCodes(timeRange = '-24 hours', groupName = null) {
