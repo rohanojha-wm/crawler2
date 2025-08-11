@@ -92,31 +92,88 @@ jobs:
             # Install sqlite3 for data extraction
             sudo apt-get update && sudo apt-get install -y sqlite3
             
-            # Check if tables exist
-            if sqlite3 monitoring.db ".tables" | grep -q "requests"; then
-              echo "📋 Generating API data from database..."
+            # Check if tables exist and have data
+            TABLE_COUNT=$(sqlite3 monitoring.db ".tables" | wc -l)
+            if [ "$TABLE_COUNT" -gt 0 ]; then
+              RECORD_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+              echo "📋 Found $RECORD_COUNT records in database"
               
-              # Generate simple groups data with real stats
-              echo '[
-                {
-                  "group": "Max Streaming",
-                  "total_requests": 0,
-                  "success_rate": 100,
-                  "avg_response_time": 500,
-                  "urls": []
-                },
-                {
-                  "group": "Discovery Plus", 
-                  "total_requests": 0,
-                  "success_rate": 100,
-                  "avg_response_time": 500,
-                  "urls": []
-                }
-              ]' > static-dashboard/api/groups.json
-              
-              echo "✅ Generated basic API data structure"
+              if [ "$RECORD_COUNT" -gt 0 ]; then
+                echo "🔄 Extracting real data from database..."
+                
+                # Generate groups data with real statistics
+                sqlite3 -json monitoring.db "
+                  SELECT 
+                    CASE 
+                      WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
+                      WHEN name LIKE '%D+%' OR name LIKE '%Discovery%' OR url LIKE '%discoveryplus%' THEN 'Discovery Plus'
+                      ELSE 'Other'
+                    END as \`group\`,
+                    COUNT(*) as total_requests,
+                    ROUND(AVG(CASE WHEN success = 1 THEN 100.0 ELSE 0.0 END), 1) as success_rate,
+                    ROUND(AVG(responseTime), 0) as avg_response_time,
+                    COUNT(DISTINCT url) as url_count
+                  FROM requests 
+                  WHERE timestamp >= datetime('now', '-24 hours')
+                  GROUP BY 
+                    CASE 
+                      WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
+                      WHEN name LIKE '%D+%' OR name LIKE '%Discovery%' OR url LIKE '%discoveryplus%' THEN 'Discovery Plus'
+                      ELSE 'Other'
+                    END
+                " > static-dashboard/api/groups.json
+                
+                # Generate recent results data
+                sqlite3 -json monitoring.db "
+                  SELECT 
+                    id,
+                    url,
+                    name,
+                    datetime(timestamp) as timestamp,
+                    status,
+                    responseTime,
+                    success,
+                    error
+                  FROM requests 
+                  WHERE timestamp >= datetime('now', '-24 hours')
+                  ORDER BY timestamp DESC 
+                  LIMIT 1000
+                " > static-dashboard/api/results.json
+                
+                # Generate status codes data
+                sqlite3 -json monitoring.db "
+                  SELECT 
+                    status,
+                    COUNT(*) as count,
+                    name,
+                    url
+                  FROM requests 
+                  WHERE timestamp >= datetime('now', '-24 hours')
+                  GROUP BY status, name, url
+                  ORDER BY status, count DESC
+                " > static-dashboard/api/status-codes.json
+                
+                # Generate failed requests data
+                sqlite3 -json monitoring.db "
+                  SELECT 
+                    id,
+                    url,
+                    name,
+                    datetime(timestamp) as timestamp,
+                    status,
+                    responseTime,
+                    error
+                  FROM requests 
+                  WHERE success = 0 AND timestamp >= datetime('now', '-24 hours')
+                  ORDER BY timestamp DESC
+                " > static-dashboard/api/failed-requests.json
+                
+                echo "✅ Generated real API data from $RECORD_COUNT database records"
+              else
+                echo "📝 Database exists but no records found, using empty data"
+              fi
             else
-              echo "📝 Database exists but no data tables found yet"
+              echo "📝 Database exists but no tables found yet"
             fi
           else
             echo "📝 No database found, using empty API responses"
