@@ -112,7 +112,6 @@ jobs:
             echo '[]' > static-dashboard/api/status-codes.json
             echo '[]' > static-dashboard/api/failed-requests.json
           fi
-          fi
           
           # Add timestamp to dashboard
           echo "<!-- Last updated: $(date -u) -->" >> static-dashboard/index.html
