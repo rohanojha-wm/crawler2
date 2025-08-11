@@ -1,0 +1,232 @@
+name: Database Maintenance
+
+on:
+  # Run weekly on Sundays at 3 AM UTC for cleanup
+  schedule:
+    - cron: '0 3 * * 0'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Maintenance operation to perform'
+        required: true
+        type: choice
+        options:
+          - 'backup-and-cleanup'
+          - 'cleanup-only'
+          - 'database-health-check'
+          - 'purge-old-data'
+        default: 'backup-and-cleanup'
+      days_to_keep:
+        description: 'Days of data to keep when purging old records'
+        required: false
+        default: '30'
+        type: string
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  database-maintenance:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Install SQLite tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3
+    
+    - name: Database health check
+      id: health_check
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "database_exists=true" >> $GITHUB_OUTPUT
+          
+          # Basic integrity check
+          if sqlite3 monitoring.db "PRAGMA integrity_check;" | grep -q "ok"; then
+            echo "integrity_ok=true" >> $GITHUB_OUTPUT
+            echo "✅ Database integrity check passed"
+          else
+            echo "integrity_ok=false" >> $GITHUB_OUTPUT
+            echo "❌ Database integrity check failed"
+          fi
+          
+          # Get database statistics
+          DB_SIZE=$(du -h monitoring.db | cut -f1)
+          TOTAL_RECORDS=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+          UNIQUE_URLS=$(sqlite3 monitoring.db "SELECT COUNT(DISTINCT name) FROM requests;")
+          OLDEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MIN(timestamp)) FROM requests;" 2>/dev/null || echo "N/A")
+          NEWEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MAX(timestamp)) FROM requests;" 2>/dev/null || echo "N/A")
+          
+          echo "db_size=$DB_SIZE" >> $GITHUB_OUTPUT
+          echo "total_records=$TOTAL_RECORDS" >> $GITHUB_OUTPUT
+          echo "unique_urls=$UNIQUE_URLS" >> $GITHUB_OUTPUT
+          echo "oldest_record=$OLDEST_RECORD" >> $GITHUB_OUTPUT
+          echo "newest_record=$NEWEST_RECORD" >> $GITHUB_OUTPUT
+          
+          echo "📊 Database Statistics:"
+          echo "   Size: $DB_SIZE"
+          echo "   Total Records: $TOTAL_RECORDS"
+          echo "   Unique URLs: $UNIQUE_URLS"
+          echo "   Date Range: $OLDEST_RECORD to $NEWEST_RECORD"
+        else
+          echo "database_exists=false" >> $GITHUB_OUTPUT
+          echo "ℹ️  No database file found"
+        fi
+    
+    - name: Create backup (if requested)
+      if: |
+        (github.event.inputs.operation == 'backup-and-cleanup' || 
+         github.event.inputs.operation == 'database-health-check') && 
+        steps.health_check.outputs.database_exists == 'true'
+      run: |
+        echo "Creating maintenance backup..."
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        BACKUP_NAME="maintenance_backup_${TIMESTAMP}"
+        
+        mkdir -p maintenance-backup
+        
+        # Create backup
+        sqlite3 monitoring.db ".backup maintenance-backup/${BACKUP_NAME}.db"
+        sqlite3 monitoring.db ".dump" > "maintenance-backup/${BACKUP_NAME}.sql"
+        
+        # Compress
+        cd maintenance-backup
+        tar -czf "${BACKUP_NAME}.tar.gz" "${BACKUP_NAME}.db" "${BACKUP_NAME}.sql"
+        rm "${BACKUP_NAME}.db" "${BACKUP_NAME}.sql"
+        cd ..
+        
+        echo "✅ Maintenance backup created: ${BACKUP_NAME}.tar.gz"
+    
+    - name: Purge old data (if requested)
+      if: |
+        github.event.inputs.operation == 'purge-old-data' && 
+        steps.health_check.outputs.database_exists == 'true'
+      run: |
+        DAYS_TO_KEEP=${{ github.event.inputs.days_to_keep || '30' }}
+        echo "Purging records older than $DAYS_TO_KEEP days..."
+        
+        # Count records before purge
+        BEFORE_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+        
+        # Delete old records
+        sqlite3 monitoring.db "DELETE FROM requests WHERE timestamp < datetime('now', '-$DAYS_TO_KEEP days');"
+        
+        # Count records after purge
+        AFTER_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+        PURGED_COUNT=$((BEFORE_COUNT - AFTER_COUNT))
+        
+        echo "📊 Purge Results:"
+        echo "   Records before: $BEFORE_COUNT"
+        echo "   Records after: $AFTER_COUNT"
+        echo "   Records purged: $PURGED_COUNT"
+        
+        # Vacuum database to reclaim space
+        echo "Optimizing database..."
+        sqlite3 monitoring.db "VACUUM;"
+        
+        NEW_SIZE=$(du -h monitoring.db | cut -f1)
+        echo "   New database size: $NEW_SIZE"
+    
+    - name: Generate maintenance report
+      run: |
+        echo "# Database Maintenance Report" > maintenance-report.md
+        echo "**Generated:** $(date)" >> maintenance-report.md
+        echo "**Operation:** ${{ github.event.inputs.operation || 'backup-and-cleanup' }}" >> maintenance-report.md
+        echo "" >> maintenance-report.md
+        
+        if [ "${{ steps.health_check.outputs.database_exists }}" == "true" ]; then
+          echo "## Database Health Check" >> maintenance-report.md
+          if [ "${{ steps.health_check.outputs.integrity_ok }}" == "true" ]; then
+            echo "- ✅ **Integrity Check:** PASSED" >> maintenance-report.md
+          else
+            echo "- ❌ **Integrity Check:** FAILED" >> maintenance-report.md
+          fi
+          echo "- **Size:** ${{ steps.health_check.outputs.db_size }}" >> maintenance-report.md
+          echo "- **Total Records:** ${{ steps.health_check.outputs.total_records }}" >> maintenance-report.md
+          echo "- **Unique URLs:** ${{ steps.health_check.outputs.unique_urls }}" >> maintenance-report.md
+          echo "- **Date Range:** ${{ steps.health_check.outputs.oldest_record }} to ${{ steps.health_check.outputs.newest_record }}" >> maintenance-report.md
+          echo "" >> maintenance-report.md
+          
+          echo "## Current URL Statistics" >> maintenance-report.md
+          echo "" >> maintenance-report.md
+          echo "| URL Name | Total Records | Success Rate | Avg Response Time | Last Check |" >> maintenance-report.md
+          echo "|----------|---------------|--------------|-------------------|------------|" >> maintenance-report.md
+          
+          sqlite3 monitoring.db -separator "|" \
+            "SELECT 
+               r.name,
+               COUNT(*) as total,
+               ROUND(AVG(CASE WHEN r.success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) || '%' as success_rate,
+               ROUND(AVG(r.responseTime), 0) || 'ms' as avg_time,
+               MAX(datetime(r.timestamp)) as last_check
+             FROM requests r
+             GROUP BY r.name 
+             ORDER BY total DESC;" | \
+          while IFS='|' read -r name total success_rate avg_time last_check; do
+            echo "| $name | $total | $success_rate | $avg_time | $last_check |" >> maintenance-report.md
+          done 2>/dev/null
+          
+          echo "" >> maintenance-report.md
+          
+          # Recent performance trends
+          echo "## Recent Performance (Last 24 Hours)" >> maintenance-report.md
+          echo "" >> maintenance-report.md
+          
+          RECENT_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests WHERE timestamp >= datetime('now', '-24 hours');" 2>/dev/null || echo "0")
+          if [ "$RECENT_COUNT" -gt 0 ]; then
+            RECENT_SUCCESS_RATE=$(sqlite3 monitoring.db "SELECT ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) FROM requests WHERE timestamp >= datetime('now', '-24 hours');" 2>/dev/null || echo "0")
+            echo "- **Recent Checks:** $RECENT_COUNT" >> maintenance-report.md
+            echo "- **24h Success Rate:** ${RECENT_SUCCESS_RATE}%" >> maintenance-report.md
+          else
+            echo "- No monitoring activity in the last 24 hours" >> maintenance-report.md
+          fi
+        else
+          echo "## Database Status" >> maintenance-report.md
+          echo "- ℹ️ No database file found" >> maintenance-report.md
+          echo "- This is normal if monitoring has not been run yet" >> maintenance-report.md
+        fi
+        
+        echo "" >> maintenance-report.md
+        echo "---" >> maintenance-report.md
+        echo "*Generated by Database Maintenance workflow*" >> maintenance-report.md
+        
+        cat maintenance-report.md
+    
+    - name: Upload maintenance artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: database-maintenance-${{ github.run_number }}
+        path: |
+          maintenance-backup/
+          maintenance-report.md
+          monitoring.db
+        retention-days: 90
+    
+    - name: Summary
+      run: |
+        echo "🔧 Database maintenance completed!"
+        echo ""
+        echo "📋 Operation: ${{ github.event.inputs.operation || 'backup-and-cleanup' }}"
+        if [ "${{ steps.health_check.outputs.database_exists }}" == "true" ]; then
+          echo "📊 Database: ${{ steps.health_check.outputs.total_records }} records, ${{ steps.health_check.outputs.db_size }}"
+          echo "🏥 Health: ${{ steps.health_check.outputs.integrity_ok == 'true' && 'HEALTHY' || 'NEEDS ATTENTION' }}"
+        else
+          echo "📊 Database: Not found"
+        fi
+        echo ""
+        echo "📁 All maintenance artifacts have been uploaded and are available"
+        echo "   for download from the Actions tab for 90 days."

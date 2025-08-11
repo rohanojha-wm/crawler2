@@ -1,0 +1,70 @@
+name: 🌐 Deploy Dashboard to GitHub Pages
+
+on:
+  schedule:
+    # Update dashboard every 15 minutes (same as monitoring)
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force dashboard regeneration'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  generate-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 🔧 Install dependencies
+        run: npm ci
+
+      - name: 🏗️ Build TypeScript
+        run: npm run build
+
+      - name: 📊 Generate monitoring data
+        run: |
+          timeout 300 npm run start:headless || true
+          ls -la *.db || echo "No database found yet"
+
+      - name: 🎨 Generate static dashboard
+        run: |
+          # Create public directory with updated data
+          mkdir -p static-dashboard
+          cp -r public/* static-dashboard/
+          
+          # If database exists, we could generate static JSON files here
+          if [ -f "monitoring.db" ]; then
+            echo "Database found, dashboard will have real data"
+          else
+            echo "No database yet, dashboard will show 'Loading...' until first monitoring cycle"
+          fi
+
+      - name: 📤 Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: 🚀 Upload to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './static-dashboard'
+
+      - name: 🌐 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

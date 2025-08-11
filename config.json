@@ -1,0 +1,32 @@
+{
+  "urls": [
+    {
+      "url": "https://httpbin.org/status/200",
+      "name": "HTTPBin Success",
+      "interval": 30000
+    },
+    {
+      "url": "https://httpbin.org/delay/2", 
+      "name": "HTTPBin Slow",
+      "interval": 60000
+    },
+    {
+      "url": "https://httpbin.org/status/500",
+      "name": "HTTPBin Error", 
+      "interval": 45000
+    },
+    {
+      "url": "https://github.com",
+      "name": "GitHub",
+      "interval": 120000
+    },
+    {
+      "url": "https://www.google.com",
+      "name": "Google",
+      "interval": 60000
+    }
+  ],
+  "defaultInterval": 60000,
+  "retryAttempts": 3,
+  "timeout": 10000
+}

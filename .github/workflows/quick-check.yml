@@ -1,0 +1,121 @@
+name: Quick URL Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: 'URLs to check (comma-separated)'
+        required: false
+        default: 'https://github.com,https://www.google.com'
+        type: string
+      duration:
+        description: 'Duration in minutes'
+        required: false
+        default: '2'
+        type: string
+      interval:
+        description: 'Check interval (in seconds)'
+        required: false
+        default: '20'
+        type: string
+
+jobs:
+  quick-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build project
+      run: npm run build
+    
+    - name: Create dynamic URLs CSV
+      run: |
+        echo "url,name,countryCode" > urls.csv
+        IFS=',' read -ra URLS <<< "${{ github.event.inputs.urls }}"
+        for url in "${URLS[@]}"; do
+          url=$(echo "$url" | xargs)  # trim whitespace
+          name=$(echo "$url" | sed 's|https\?://||' | sed 's|/.*||')
+          # Default country code to US for quick checks
+          echo "$url,$name,US" >> urls.csv
+        done
+        echo "Generated URLs CSV:"
+        cat urls.csv
+    
+    - name: Run monitoring
+      timeout-minutes: ${{ github.event.inputs.duration }}
+      run: |
+        export URLS_CSV_PATH="./urls.csv"
+        export HEADLESS="true"
+        export MONITOR_TIMEOUT=$((${{ github.event.inputs.duration }} * 60))
+        export CHECK_INTERVAL=$((${{ github.event.inputs.interval || '20' }} * 1000))
+        
+        echo "Running quick check for ${{ github.event.inputs.duration }} minutes..."
+        echo "Check interval: ${{ github.event.inputs.interval || '20' }} seconds"
+        npm run start:headless
+      continue-on-error: true
+    
+    - name: Generate quick report
+      if: always()
+      run: |
+        if [ -f monitoring.db ]; then
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          
+          echo "# Quick URL Check Report" > quick-report.md
+          echo "Generated: $(date)" >> quick-report.md
+          echo "" >> quick-report.md
+          
+          # Overall stats
+          TOTAL=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+          SUCCESS=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests WHERE success = 1;")
+          if [ "$TOTAL" -gt 0 ]; then
+            SUCCESS_RATE=$(echo "scale=1; $SUCCESS * 100 / $TOTAL" | bc)
+            echo "**Overall Success Rate: ${SUCCESS_RATE}% (${SUCCESS}/${TOTAL})**" >> quick-report.md
+          else
+            echo "**No requests recorded**" >> quick-report.md
+          fi
+          echo "" >> quick-report.md
+          
+          # Per-URL results
+          echo "## Results by URL" >> quick-report.md
+          echo "" >> quick-report.md
+          
+          sqlite3 monitoring.db -separator "|" \
+            "SELECT name, url, COUNT(*) as checks, 
+                    ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) as success_rate,
+                    ROUND(AVG(responseTime), 0) as avg_time,
+                    MIN(responseTime) as min_time,
+                    MAX(responseTime) as max_time
+             FROM requests 
+             GROUP BY name, url;" | \
+          while IFS='|' read -r name url checks success avg min max; do
+            echo "### $name" >> quick-report.md
+            echo "- **URL:** $url" >> quick-report.md
+            echo "- **Checks:** $checks" >> quick-report.md
+            echo "- **Success Rate:** ${success}%" >> quick-report.md
+            echo "- **Response Time:** ${avg}ms (min: ${min}ms, max: ${max}ms)" >> quick-report.md
+            echo "" >> quick-report.md
+          done
+          
+          cat quick-report.md
+        fi
+    
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quick-check-${{ github.run_number }}
+        path: |
+          monitoring.db
+          quick-report.md
+          urls.csv

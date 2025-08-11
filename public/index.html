@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Monitor Dashboard</title>
+    <meta name="description" content="Real-time URL monitoring dashboard with response times and status tracking">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>📊</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        .refresh-btn {
+            background: linear-gradient(45deg, #28a745, #20c997);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .success { color: #28a745; }
+        .warning { color: #ffc107; }
+        .danger { color: #dc3545; }
+        .info { color: #17a2b8; }
+
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+        }
+
+        .chart-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .chart-card h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+        }
+
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .group-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 25px;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .group-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(31, 38, 135, 0.4);
+        }
+
+        .group-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .group-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            text-align: center;
+        }
+
+        .group-stat {
+            padding: 10px;
+        }
+
+        .group-stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .group-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 5px;
+        }
+
+        .back-btn {
+            background: linear-gradient(45deg, #6c757d, #495057);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .nav-buttons {
+                justify-content: center;
+            }
+            
+            .groups-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 URL Monitor Dashboard</h1>
+            <p>Real-time monitoring of website availability and performance</p>
+            <div class="nav-buttons">
+                <button class="nav-btn refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
+                <a href="failed-requests.html" class="nav-btn" style="text-decoration: none; display: inline-block;">🚨 Failed Requests</a>
+            </div>
+        </div>
+
+        <div id="groupsContainer" class="groups-grid">
+            <div class="loading">Loading group statistics...</div>
+        </div>
+
+        <div id="urlDetailsContainer" style="display: none;">
+            <button class="back-btn" onclick="showGroups()">⬅️ Back to Groups</button>
+            <h3 id="selectedGroupTitle">Group Details</h3>
+            <div id="urlsList" class="stats-grid"></div>
+        </div>
+
+        <div class="charts-container">
+            <div class="chart-card">
+                <h3>📊 Response Times by Group (Last 24 Hours)</h3>
+                <div class="chart-container">
+                    <canvas id="responseTimeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>🚦 Status Code Distribution (Last 24 Hours)</h3>
+                <div class="chart-container">
+                    <canvas id="statusCodeChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let responseTimeChart;
+        let statusCodeChart;
+        let currentView = 'groups'; // 'groups' or 'urls'
+        let selectedGroup = null;
+
+        async function fetchGroups() {
+            try {
+                const response = await fetch('/api/groups');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching groups:', error);
+                return [];
+            }
+        }
+
+        async function fetchUrlsByGroup(groupName) {
+            try {
+                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/urls`);
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching URLs by group:', error);
+                return [];
+            }
+        }
+
+        async function fetchStatusCodes(timeRange = '-24 hours', groupName = null) {
+            try {
+                let url = `/api/status-codes?timeRange=${encodeURIComponent(timeRange)}`;
+                if (groupName) {
+                    url += `&group=${encodeURIComponent(groupName)}`;
+                }
+                const response = await fetch(url);
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching status codes:', error);
+                return [];
+            }
+        }
+
+        async function fetchResults(timeRange = '-24 hours', groupName = null) {
+            try {
+                let url = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
+                if (groupName) {
+                    url += `&group=${encodeURIComponent(groupName)}`;
+                }
+                const response = await fetch(url);
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching results:', error);
+                return [];
+            }
+        }
+
+        function getStatusColor(status) {
+            if (status >= 200 && status < 300) return '#28a745'; // Success - Green
+            if (status >= 300 && status < 400) return '#ffc107'; // Redirect - Yellow
+            if (status >= 400 && status < 500) return '#fd7e14'; // Client Error - Orange
+            if (status >= 500) return '#dc3545'; // Server Error - Red
+            return '#6c757d'; // Unknown - Gray
+        }
+
+        function getStatusText(status) {
+            if (status >= 200 && status < 300) return 'Success';
+            if (status >= 300 && status < 400) return 'Redirect';
+            if (status >= 400 && status < 500) return 'Client Error';
+            if (status >= 500) return 'Server Error';
+            return 'Unknown';
+        }
+
+        function renderGroups(groups) {
+            const container = document.getElementById('groupsContainer');
+            
+            if (groups.length === 0) {
+                container.innerHTML = '<div class="loading">No groups available yet. Monitoring will begin shortly...</div>';
+                return;
+            }
+
+            container.innerHTML = groups.map(group => {
+                let successClass;
+                if (group.success_rate >= 95) {
+                    successClass = 'success';
+                } else if (group.success_rate >= 80) {
+                    successClass = 'warning';
+                } else {
+                    successClass = 'danger';
+                }
+                
+                return `
+                    <div class="stat-card" style="cursor: pointer;" onclick="showGroupUrls('${group.group_name}')">
+                        <h3>${group.group_name}</h3>
+                        <div class="stat-value ${successClass}">${group.success_rate.toFixed(1)}%</div>
+                        <small>Success Rate</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value">${Math.round(group.avg_response_time)}ms</div>
+                        <small>Avg Response Time</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value">${group.url_count}</div>
+                        <small>URLs in Group</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value">${group.total_requests}</div>
+                        <small>Total Requests</small>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function showGroupUrls(groupName) {
+            currentView = 'urls';
+            selectedGroup = groupName;
+            document.getElementById('groupsContainer').style.display = 'none';
+            document.getElementById('urlDetailsContainer').style.display = 'block';
+            document.getElementById('selectedGroupTitle').textContent = `URLs in ${groupName}`;
+
+            const urls = await fetchUrlsByGroup(groupName);
+            const container = document.getElementById('urlsList');
+
+            if (urls.length === 0) {
+                container.innerHTML = '<div class="loading">No URLs found in this group.</div>';
+                return;
+            }
+
+            container.innerHTML = urls.map(url => {
+                let successClass;
+                if (url.success_rate >= 95) {
+                    successClass = 'success';
+                } else if (url.success_rate >= 80) {
+                    successClass = 'warning';
+                } else {
+                    successClass = 'danger';
+                }
+                
+                return `
+                    <div class="stat-card">
+                        <h3>${url.name}</h3>
+                        <small style="color: #666; font-size: 12px;">${url.url}</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value ${successClass}">${url.success_rate.toFixed(1)}%</div>
+                        <small>Success Rate</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value">${Math.round(url.avg_response_time)}ms</div>
+                        <small>Avg Response Time</small>
+                        <hr style="margin: 10px 0;">
+                        <div class="stat-value">${url.total_requests}</div>
+                        <small>Total Requests</small>
+                    </div>
+                `;
+            }).join('');
+
+            // Update charts to show only this group's data
+            await createResponseTimeChart();
+            await createStatusCodeChart();
+        }
+
+        function showGroups() {
+            currentView = 'groups';
+            selectedGroup = null;
+            document.getElementById('groupsContainer').style.display = 'grid';
+            document.getElementById('urlDetailsContainer').style.display = 'none';
+            
+            // Update charts to show all URLs
+            createResponseTimeChart();
+            createStatusCodeChart();
+        }
+
+        async function createResponseTimeChart() {
+            const ctx = document.getElementById('responseTimeChart').getContext('2d');
+            const results = await fetchResults('-24 hours', selectedGroup);
+            
+            if (responseTimeChart) {
+                responseTimeChart.destroy();
+            }
+
+            if (results.length === 0) {
+                ctx.fillText('No data available', 10, 50);
+                return;
+            }
+
+            const groupedData = {};
+            results.forEach(result => {
+                if (!groupedData[result.name]) {
+                    groupedData[result.name] = [];
+                }
+                groupedData[result.name].push({
+                    x: new Date(result.timestamp),
+                    y: result.responseTime
+                });
+            });
+
+            const datasets = Object.keys(groupedData).map((name, index) => ({
+                label: name,
+                data: groupedData[name],
+                borderColor: `hsl(${index * 60}, 70%, 50%)`,
+                backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
+                tension: 0.4
+            }));
+
+            responseTimeChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'hour',
+                                displayFormats: {
+                                    hour: 'MMM dd HH:mm'
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Response Time (ms)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top'
+                        },
+                        title: {
+                            display: true,
+                            text: selectedGroup ? `Response Time - ${selectedGroup}` : 'Response Time - All URLs'
+                        }
+                    }
+                }
+            });
+        }
+
+        async function createStatusCodeChart() {
+            const ctx = document.getElementById('statusCodeChart').getContext('2d');
+            const results = await fetchResults('-24 hours', selectedGroup);
+            
+            if (results.length === 0) {
+                ctx.fillText('No data available', 10, 50);
+                return;
+            }
+
+            // Group by URL and organize status codes over time
+            const groupedData = {};
+            results.forEach(result => {
+                if (!groupedData[result.name]) {
+                    groupedData[result.name] = [];
+                }
+                groupedData[result.name].push({
+                    x: new Date(result.timestamp),
+                    y: result.status
+                });
+            });
+
+            // Sort each group by timestamp
+            Object.keys(groupedData).forEach(name => {
+                groupedData[name].sort((a, b) => a.x - b.x);
+            });
+
+            const datasets = Object.keys(groupedData).map((name, index) => ({
+                label: name,
+                data: groupedData[name],
+                borderColor: `hsl(${index * 60}, 70%, 50%)`,
+                backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
+                tension: 0.1,
+                fill: false,
+                pointBackgroundColor: function(context) {
+                    const status = context.parsed.y;
+                    return getStatusColor(status);
+                },
+                pointBorderColor: function(context) {
+                    const status = context.parsed.y;
+                    return getStatusColor(status);
+                },
+                pointRadius: 4
+            }));
+
+            if (statusCodeChart) {
+                statusCodeChart.destroy();
+            }
+
+            statusCodeChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'hour',
+                                displayFormats: {
+                                    hour: 'MMM dd HH:mm'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'HTTP Status Code'
+                            },
+                            min: 0,
+                            max: 600,
+                            ticks: {
+                                stepSize: 100,
+                                callback: function(value) {
+                                    // Show major status code ranges
+                                    if (value === 0) return '0 (Failed)';
+                                    if (value === 200) return '200 (Success)';
+                                    if (value === 300) return '300 (Redirect)';
+                                    if (value === 400) return '400 (Client Error)';
+                                    if (value === 500) return '500 (Server Error)';
+                                    return value;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: selectedGroup ? `Status Codes Over Time - ${selectedGroup}` : 'Status Codes Over Time - All URLs'
+                        },
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const status = context.parsed.y;
+                                    return `${context.dataset.label}: ${status} (${getStatusText(status)})`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function refreshData() {
+            try {
+                if (currentView === 'groups') {
+                    const groups = await fetchGroups();
+                    renderGroups(groups);
+                    selectedGroup = null;
+                } else if (selectedGroup) {
+                    // In URL details view, refresh that view
+                    await showGroupUrls(selectedGroup);
+                    return; // showGroupUrls already updates the charts
+                }
+                
+                // Refresh charts with current group filter
+                await createResponseTimeChart();
+                await createStatusCodeChart();
+            } catch (error) {
+                console.error('Error refreshing data:', error);
+            }
+        }
+
+        // Initial load
+        async function initialize() {
+            const groups = await fetchGroups();
+            renderGroups(groups);
+            await createResponseTimeChart();
+            await createStatusCodeChart();
+        }
+
+        initialize();
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshData, 30000);
+    </script>
+</body>
+</html>

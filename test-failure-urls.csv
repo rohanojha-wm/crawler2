@@ -1,0 +1,8 @@
+url,name,countryCode,group
+https://www.max.com,US Homepage Max,US,Max Streaming
+https://www.discoveryplus.com,D+ Homepage Max,US,Discovery Plus
+https://httpbin.org/status/500,Test Failure URL,US,Test Group
+https://www.max.com/shows,US Show,US,Max Streaming
+https://www.max.com/movies,US Movie,US,Max Streaming
+https://www.discoveryplus.com/shows,D+ Show,US,Discovery Plus
+https://www.discoveryplus.com/movies,D+ Movie,US,Discovery Plus

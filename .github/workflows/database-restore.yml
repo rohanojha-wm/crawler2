@@ -1,0 +1,217 @@
+name: Database Restore
+
+on:
+  # Manual trigger only (for safety)
+  workflow_dispatch:
+    inputs:
+      backup_run_id:
+        description: 'GitHub Actions run ID containing the backup to restore'
+        required: true
+        type: string
+      backup_artifact_name:
+        description: 'Name of the backup artifact to restore'
+        required: true
+        type: string
+      confirm_restore:
+        description: 'Type "CONFIRM" to proceed with restore (destructive operation)'
+        required: true
+        type: string
+      create_pre_restore_backup:
+        description: 'Create backup of current database before restore'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  restore-database:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Validate confirmation
+      run: |
+        if [ "${{ github.event.inputs.confirm_restore }}" != "CONFIRM" ]; then
+          echo "❌ Restore operation not confirmed. Please type 'CONFIRM' to proceed."
+          echo "This is a destructive operation that will replace the current database."
+          exit 1
+        fi
+        echo "✅ Restore operation confirmed"
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Install SQLite tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3
+    
+    - name: Create pre-restore backup
+      if: github.event.inputs.create_pre_restore_backup == 'true'
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "Creating pre-restore backup of current database..."
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          PRE_RESTORE_NAME="pre_restore_backup_${TIMESTAMP}"
+          
+          mkdir -p pre-restore-backup
+          sqlite3 monitoring.db ".backup pre-restore-backup/${PRE_RESTORE_NAME}.db"
+          sqlite3 monitoring.db ".dump" > "pre-restore-backup/${PRE_RESTORE_NAME}.sql"
+          
+          cd pre-restore-backup
+          tar -czf "${PRE_RESTORE_NAME}.tar.gz" "${PRE_RESTORE_NAME}.db" "${PRE_RESTORE_NAME}.sql"
+          rm "${PRE_RESTORE_NAME}.db" "${PRE_RESTORE_NAME}.sql"
+          cd ..
+          
+          echo "Pre-restore backup created: ${PRE_RESTORE_NAME}.tar.gz"
+        else
+          echo "No existing database found - skipping pre-restore backup"
+        fi
+    
+    - name: Download backup artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ github.event.inputs.backup_artifact_name }}
+        path: ./restore-source
+        run-id: ${{ github.event.inputs.backup_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract and validate backup
+      run: |
+        echo "Extracting backup archive..."
+        cd restore-source
+        
+        # Find the backup archive
+        ARCHIVE_FILE=$(find . -name "*.tar.gz" | head -1)
+        if [ -z "$ARCHIVE_FILE" ]; then
+          echo "❌ No backup archive found in artifact"
+          exit 1
+        fi
+        
+        echo "Found backup archive: $ARCHIVE_FILE"
+        
+        # Extract the archive
+        tar -xzf "$ARCHIVE_FILE"
+        
+        # Find the database file
+        DB_FILE=$(find . -name "*.db" | head -1)
+        if [ -z "$DB_FILE" ]; then
+          echo "❌ No database file found in backup"
+          exit 1
+        fi
+        
+        echo "Found database file: $DB_FILE"
+        
+        # Validate the database
+        if sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM requests;" > /dev/null 2>&1; then
+          RECORD_COUNT=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM requests;")
+          echo "✅ Database validation successful - $RECORD_COUNT records found"
+        else
+          echo "❌ Database validation failed - file may be corrupted"
+          exit 1
+        fi
+        
+        # Move database to root for restore
+        cp "$DB_FILE" ../monitoring_restore.db
+        cd ..
+    
+    - name: Perform database restore
+      run: |
+        echo "Performing database restore..."
+        
+        # Remove current database if it exists
+        if [ -f monitoring.db ]; then
+          echo "Removing current database..."
+          rm monitoring.db
+        fi
+        
+        # Restore from backup
+        echo "Restoring database from backup..."
+        mv monitoring_restore.db monitoring.db
+        
+        # Verify restore
+        if [ -f monitoring.db ]; then
+          RESTORED_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+          echo "✅ Database restore completed successfully"
+          echo "📊 Restored records: $RESTORED_COUNT"
+        else
+          echo "❌ Database restore failed"
+          exit 1
+        fi
+    
+    - name: Generate restore report
+      run: |
+        echo "# Database Restore Report" > restore-report.md
+        echo "**Restored on:** $(date)" >> restore-report.md
+        echo "**Source Backup:** ${{ github.event.inputs.backup_artifact_name }}" >> restore-report.md
+        echo "**Source Run ID:** ${{ github.event.inputs.backup_run_id }}" >> restore-report.md
+        echo "" >> restore-report.md
+        
+        echo "## Restored Database Statistics" >> restore-report.md
+        DB_SIZE=$(du -h monitoring.db | cut -f1)
+        TOTAL_RECORDS=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+        OLDEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MIN(timestamp)) FROM requests;" 2>/dev/null || echo "N/A")
+        NEWEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MAX(timestamp)) FROM requests;" 2>/dev/null || echo "N/A")
+        
+        echo "- **Database Size:** $DB_SIZE" >> restore-report.md
+        echo "- **Total Records:** $TOTAL_RECORDS" >> restore-report.md
+        echo "- **Date Range:** $OLDEST_RECORD to $NEWEST_RECORD" >> restore-report.md
+        echo "" >> restore-report.md
+        
+        echo "## URLs in Restored Database" >> restore-report.md
+        echo "" >> restore-report.md
+        echo "| URL Name | Total Records | Success Rate |" >> restore-report.md
+        echo "|----------|---------------|--------------|" >> restore-report.md
+        
+        sqlite3 monitoring.db -separator "|" \
+          "SELECT name, 
+                  COUNT(*) as total,
+                  ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) || '%' as success_rate
+           FROM requests 
+           GROUP BY name 
+           ORDER BY total DESC;" | \
+        while IFS='|' read -r name total success_rate; do
+          echo "| $name | $total | $success_rate |" >> restore-report.md
+        done
+        
+        echo "" >> restore-report.md
+        echo "---" >> restore-report.md
+        echo "*Database successfully restored from backup artifact.*" >> restore-report.md
+        
+        cat restore-report.md
+    
+    - name: Upload restored database and reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: restored-database-${{ github.run_number }}
+        path: |
+          monitoring.db
+          restore-report.md
+          pre-restore-backup/
+        retention-days: 30
+    
+    - name: Summary
+      run: |
+        echo "🎉 Database restore completed successfully!"
+        echo ""
+        echo "📋 Restore Details:"
+        echo "   - Source: ${{ github.event.inputs.backup_artifact_name }}"
+        echo "   - Run ID: ${{ github.event.inputs.backup_run_id }}"
+        echo "   - Records: $(sqlite3 monitoring.db 'SELECT COUNT(*) FROM requests;')"
+        echo ""
+        echo "⚠️  Important Notes:"
+        echo "   - The current database has been replaced with the restored version"
+        if [ "${{ github.event.inputs.create_pre_restore_backup }}" == "true" ]; then
+          echo "   - Pre-restore backup has been saved as an artifact"
+        fi
+        echo "   - You may want to run a monitoring cycle to verify the restored database"

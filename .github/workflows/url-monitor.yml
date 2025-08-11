@@ -1,0 +1,166 @@
+name: URL Monitor
+
+on:
+  # Run on schedule (every 15 minutes)
+  schedule:
+    - cron: '*/15 * * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'How long to run monitoring (in minutes)'
+        required: false
+        default: '3'
+        type: string
+      interval:
+        description: 'Check interval (in seconds)'
+        required: false
+        default: '30'
+        type: string
+  
+  # Run on push to main branch (for testing)
+  push:
+    branches: [ main ]
+  
+  # Run on pull request (for testing)
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  url-monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build TypeScript
+      run: npm run build
+    
+    - name: Verify URLs CSV exists
+      run: |
+        if [ ! -f urls.csv ]; then
+          echo "Creating default urls.csv file"
+          cat > urls.csv << EOF
+        url,name,countryCode
+        https://httpbin.org/status/200,HTTPBin Success,US
+        https://github.com,GitHub,US
+        https://www.google.com,Google,UK
+        EOF
+        fi
+        echo "URLs to monitor:"
+        cat urls.csv
+    
+    - name: Run URL monitoring
+      timeout-minutes: ${{ github.event.inputs.duration || '3' }}
+      run: |
+        echo "Starting URL monitoring for ${{ github.event.inputs.duration || '3' }} minutes..."
+        echo "Check interval: ${{ github.event.inputs.interval || '30' }} seconds"
+        
+        # Set environment variables for configuration
+        export URLS_CSV_PATH="./urls.csv"
+        export NODE_ENV="production"
+        export HEADLESS="true"
+        export MONITOR_TIMEOUT=$((${{ github.event.inputs.duration || '3' }} * 60))
+        export CHECK_INTERVAL=$((${{ github.event.inputs.interval || '30' }} * 1000))
+        export SLACK_WEBHOOK_URL="${{ secrets.SLACK_WEBHOOK_URL }}"
+        
+        # Start monitoring in headless mode
+        npm run start:headless
+        
+        echo "Monitoring completed"
+      continue-on-error: true
+    
+    - name: Generate monitoring report
+      if: always()
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "## URL Monitoring Report" > monitoring-report.md
+          echo "Generated on: $(date)" >> monitoring-report.md
+          echo "" >> monitoring-report.md
+          
+          # Install sqlite3 for report generation
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          
+          # Generate basic stats
+          echo "### Summary Statistics" >> monitoring-report.md
+          echo "" >> monitoring-report.md
+          echo "| URL Name | Total Requests | Success Rate | Avg Response Time |" >> monitoring-report.md
+          echo "|----------|----------------|--------------|-------------------|" >> monitoring-report.md
+          
+          sqlite3 monitoring.db -separator "|" \
+            "SELECT name, 
+                    COUNT(*) as total_requests,
+                    ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) || '%' as success_rate,
+                    ROUND(AVG(responseTime), 0) || 'ms' as avg_response_time
+             FROM requests 
+             GROUP BY name;" | \
+          while IFS='|' read -r name total success avg_time; do
+            echo "| $name | $total | $success | $avg_time |" >> monitoring-report.md
+          done
+          
+          echo "" >> monitoring-report.md
+          echo "### Recent Results (Last 10)" >> monitoring-report.md
+          echo "" >> monitoring-report.md
+          echo "| Timestamp | URL Name | Status | Response Time | Success |" >> monitoring-report.md
+          echo "|-----------|----------|--------|---------------|---------|" >> monitoring-report.md
+          
+          sqlite3 monitoring.db -separator "|" \
+            "SELECT datetime(timestamp) as time, name, status, responseTime || 'ms', 
+                    CASE WHEN success = 1 THEN '✅' ELSE '❌' END
+             FROM requests 
+             ORDER BY timestamp DESC 
+             LIMIT 10;" | \
+          while IFS='|' read -r time name status resp_time success; do
+            echo "| $time | $name | $status | $resp_time | $success |" >> monitoring-report.md
+          done
+          
+          echo "" >> monitoring-report.md
+          echo "### Database Info" >> monitoring-report.md
+          echo "- Total records: $(sqlite3 monitoring.db 'SELECT COUNT(*) FROM requests;')" >> monitoring-report.md
+          echo "- Database size: $(du -h monitoring.db | cut -f1)" >> monitoring-report.md
+          
+          cat monitoring-report.md
+        else
+          echo "No monitoring database found"
+        fi
+    
+    - name: Upload monitoring database
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: monitoring-database-${{ github.run_number }}
+        path: |
+          monitoring.db
+          monitoring-report.md
+        retention-days: 30
+    
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('monitoring-report.md')) {
+            const report = fs.readFileSync('monitoring-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔍 URL Monitoring Results\n\n${report}`
+            });
+          }
