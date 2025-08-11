@@ -55,10 +55,30 @@ jobs:
       run: npm run build
 
     - name: 📊 Download previous monitoring database
-      uses: actions/download-artifact@v4
-      with:
-        name: monitoring-database
-        path: ./
+      shell: bash
+      run: |
+        echo "🔍 Finding latest monitoring database artifact..."
+        
+        # Get the latest successful monitoring workflow run (excluding current run)
+        LATEST_RUN=$(gh api repos/${{ github.repository }}/actions/workflows/url-monitor.yml/runs \
+          --jq '.workflow_runs[] | select(.conclusion == "success" and .id != ${{ github.run_id }}) | .id' \
+          --limit 1 | head -1)
+        
+        if [ -n "$LATEST_RUN" ]; then
+          echo "📥 Found previous run: $LATEST_RUN"
+          echo "🔄 Attempting to download database from run $LATEST_RUN..."
+          
+          # Try to download the artifact
+          if gh run download $LATEST_RUN --name monitoring-database --dir ./; then
+            echo "✅ Successfully downloaded previous database"
+          else
+            echo "⚠️ Could not download previous database, will start fresh"
+          fi
+        else
+          echo "📝 No previous successful monitoring runs found, starting fresh"
+        fi
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       continue-on-error: true
 
     - name: 🔍 Check database status

@@ -268,6 +268,9 @@
                 <span id="modeIndicator" class="nav-btn" style="background: linear-gradient(45deg, #17a2b8, #20c997); cursor: default;">
                     📡 Detecting mode...
                 </span>
+                <span id="lastUpdated" class="nav-btn" style="background: linear-gradient(45deg, #6c757d, #495057); cursor: default;">
+                    🕒 Loading...
+                </span>
             </div>
         </div>
 
@@ -311,18 +314,39 @@
 
         console.log('Static mode detected:', isStaticMode, 'hostname:', window.location.hostname, 'protocol:', window.location.protocol, 'port:', window.location.port);
 
+        function updateTimestamp() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('en-US', { 
+                hour12: false, 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+            });
+            const dateString = now.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: '2-digit' 
+            });
+            document.getElementById('lastUpdated').innerHTML = `🕒 Updated: ${dateString} ${timeString}`;
+        }
+
         async function fetchWithFallback(apiPath, staticFile) {
             try {
+                console.log('fetchWithFallback: called with apiPath:', apiPath, 'staticFile:', staticFile, 'isStaticMode:', isStaticMode);
                 // Try live API first
                 if (!isStaticMode) {
+                    console.log('fetchWithFallback: trying live API...');
                     const response = await fetch(apiPath);
+                    console.log('fetchWithFallback: live API response:', response.status, response.ok);
                     if (response.ok) {
-                        return await response.json();
+                        const data = await response.json();
+                        console.log('fetchWithFallback: live API data:', data);
+                        return data;
                     }
                 }
                 
                 // Fallback to static JSON file with cache busting
                 // Note: Static files don't support query parameters, so we just fetch the base file
+                console.log('fetchWithFallback: falling back to static file...');
                 const cacheBuster = Date.now();
                 const response = await fetch(`${staticFile}?v=${cacheBuster}`);
                 if (response.ok) {
@@ -331,6 +355,7 @@
                     return data;
                 }
                 
+                console.log('fetchWithFallback: no data available, returning empty array');
                 return [];
             } catch (error) {
                 console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
@@ -876,6 +901,7 @@
 
         async function refreshData() {
             try {
+                updateTimestamp();
                 if (currentView === 'groups') {
                     const groups = await fetchGroups();
                     renderGroups(groups);
@@ -908,7 +934,10 @@
                 modeIndicator.title = 'Connected to live API with real-time data';
             }
 
+            updateTimestamp();
+            console.log('Initialize: Starting to fetch groups...');
             const groups = await fetchGroups();
+            console.log('Initialize: Fetched groups:', groups);
             renderGroups(groups);
             await createResponseTimeChart();
             await createStatusCodeChart();

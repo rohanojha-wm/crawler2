@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Test Dashboard</title>
+</head>
+<body>
+    <h1>Simple Test Dashboard</h1>
+    <div id="status">Loading...</div>
+    <div id="groups"></div>
+    
+    <script>
+        async function loadData() {
+            try {
+                console.log('Loading groups...');
+                const response = await fetch('/api/groups');
+                console.log('Response:', response);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const groups = await response.json();
+                console.log('Groups:', groups);
+                
+                document.getElementById('status').textContent = `Found ${groups.length} groups`;
+                
+                const groupsHtml = groups.map(group => `
+                    <div style="border: 1px solid #ccc; margin: 10px; padding: 10px;">
+                        <h3>${group.group_name}</h3>
+                        <p>URLs: ${group.url_count}</p>
+                        <p>Success Rate: ${group.success_rate.toFixed(1)}%</p>
+                        <p>Avg Response Time: ${group.avg_response_time.toFixed(0)}ms</p>
+                        <p>Total Requests: ${group.total_requests}</p>
+                    </div>
+                `).join('');
+                
+                document.getElementById('groups').innerHTML = groupsHtml;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('status').textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        loadData();
+    </script>
+</body>
+</html>

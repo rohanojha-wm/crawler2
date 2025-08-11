@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug API</title>
+</head>
+<body>
+    <h1>Debug API Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        async function testAPI() {
+            try {
+                console.log('Testing /api/groups...');
+                const response = await fetch('/api/groups');
+                console.log('Response:', response);
+                const data = await response.json();
+                console.log('Groups data:', data);
+                
+                document.getElementById('output').innerHTML = `
+                    <h2>Groups (${data.length})</h2>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+                
+                // Test results too
+                const resultsResponse = await fetch('/api/results?timeRange=-1%20hour');
+                const resultsData = await resultsResponse.json();
+                console.log('Results data:', resultsData);
+                
+                document.getElementById('output').innerHTML += `
+                    <h2>Results (${resultsData.length})</h2>
+                    <pre>${JSON.stringify(resultsData.slice(0, 3), null, 2)}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('output').innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+        
+        testAPI();
+    </script>
+</body>
+</html>
