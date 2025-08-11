@@ -1,9 +1,9 @@
 name: URL Monitor
 
 on:
-  # Run on schedule (every 15 minutes)
+  # Run on schedule (every 30 minutes)
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   
   # Allow manual trigger
   workflow_dispatch:
@@ -11,12 +11,12 @@ on:
       duration:
         description: 'How long to run monitoring (in minutes)'
         required: false
-        default: '3'
+        default: '2'
         type: string
       interval:
         description: 'Check interval (in seconds)'
         required: false
-        default: '30'
+        default: '60'
         type: string
   
   # Run on push to main branch (for testing)
@@ -65,18 +65,19 @@ jobs:
         cat urls.csv
     
     - name: Run URL monitoring
-      timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '3') }}
+      timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '2') }}
       run: |
-        echo "Starting URL monitoring for ${{ github.event.inputs.duration || '3' }} minutes..."
-        echo "Check interval: ${{ github.event.inputs.interval || '30' }} seconds"
+        echo "Starting single-pass URL monitoring..."
+        echo "Checking all URLs once in this iteration"
         
         # Set environment variables for configuration
         export URLS_CSV_PATH="./urls.csv"
         export NODE_ENV="production"
         export HEADLESS="true"
-        export MONITOR_TIMEOUT=$((${{ github.event.inputs.duration || '3' }} * 60))
-        export CHECK_INTERVAL=$((${{ github.event.inputs.interval || '30' }} * 1000))
+        export MONITOR_TIMEOUT=$((${{ github.event.inputs.duration || '2' }} * 60))
+        export CHECK_INTERVAL=$((${{ github.event.inputs.interval || '60' }} * 1000))
         export SLACK_WEBHOOK_URL="${{ secrets.SLACK_WEBHOOK_URL }}"
+        export SINGLE_PASS="true"
         
         # Start monitoring in headless mode
         npm run start:headless

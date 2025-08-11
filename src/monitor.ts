@@ -81,6 +81,18 @@ export class UrlMonitor {
   startMonitoring(): void {
     console.log('Starting URL monitoring...');
     
+    // Check if we're in single-pass mode
+    const singlePass = process.env.SINGLE_PASS === 'true';
+    
+    if (singlePass) {
+      console.log('🔄 Single-pass mode: Checking all URLs once');
+      this.runSingleCheck();
+      return;
+    }
+    
+    // Original periodic monitoring mode
+    console.log('🔁 Continuous monitoring mode');
+    
     // Initial check for all URLs
     this.config.urls.forEach(urlConfig => {
       this.checkUrl(urlConfig).then(result => {
@@ -108,6 +120,34 @@ export class UrlMonitor {
     }, this.config.defaultInterval);
 
     this.intervals.set('main', intervalId);
+  }
+
+  async runSingleCheck(): Promise<void> {
+    console.log(`\n📊 Running single monitoring check at ${new Date().toISOString()}`);
+    
+    try {
+      // Check all URLs in parallel
+      const promises = this.config.urls.map(async (urlConfig) => {
+        try {
+          const result = await this.checkUrl(urlConfig);
+          console.log(`${result.name}: ${result.success ? '✅' : '❌'} ${result.status} (${result.responseTime}ms)`);
+          return result;
+        } catch (error) {
+          console.error(`Error monitoring ${urlConfig.name}:`, error);
+          return null;
+        }
+      });
+
+      const results = await Promise.all(promises);
+      const successCount = results.filter(r => r?.success).length;
+      const totalCount = results.filter(r => r !== null).length;
+      
+      console.log(`\n📈 Single check completed: ${successCount}/${totalCount} URLs successful`);
+      console.log('✅ Single-pass monitoring finished');
+      
+    } catch (error) {
+      console.error('❌ Error during single check:', error);
+    }
   }
 
   stopMonitoring(): void {
