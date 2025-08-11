@@ -61,7 +61,7 @@ jobs:
         
         # Get the latest successful monitoring workflow run (excluding current run)
         LATEST_RUN=$(gh api repos/${{ github.repository }}/actions/workflows/url-monitor.yml/runs \
-          --jq '.workflow_runs[] | select(.conclusion == "success" and .id != ${{ github.run_id }}) | .id' | head -1)
+          --jq '.workflow_runs[] | select(.conclusion == "success" and .id != ${{ github.run_id }}) | .id' | head -1) || true
         
         if [ -n "$LATEST_RUN" ]; then
           echo "📥 Found previous run: $LATEST_RUN"
