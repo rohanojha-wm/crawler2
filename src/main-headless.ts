@@ -1,46 +1,43 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { Database } from './database';
-import { Monitor } from './monitor';
 import { ConfigLoader } from './config-loader';
-import { MonitorConfig } from './types';
+import { MonitorConfig, RequestResult } from './types';
 
 class HeadlessApplication {
     private database: Database;
-    private monitor: Monitor;
 
     constructor() {
         this.database = new Database();
-        this.monitor = new Monitor(this.database);
     }
 
     async run(): Promise<void> {
         try {
             console.log('🤖 Starting Headless URL Monitor...');
 
-            // Initialize database (will use existing file if present)
+            // Initialize SQLite database for storing monitoring results
             const dbPath = process.env.DATABASE_PATH || 'monitor.db';
             await this.database.initialize(dbPath);
             console.log(`✅ Database initialized: ${dbPath}`);
 
-            // Check existing record count
+            // Check existing record count for CI/CD tracking
             const existingResults = await this.database.getResults('-30 days');
             console.log(`📊 Existing database records: ${existingResults.length}`);
 
-            // Load configuration from CSV or JSON
+            // Load configuration from CSV (recommended) or JSON (legacy)
             const config = await this.loadConfiguration();
             console.log(`✅ Configuration loaded: ${config.urls.length} URLs to monitor`);
 
-            // Run single monitoring cycle for all URLs
+            // Run single monitoring cycle for all configured URLs
             await this.runSingleCycle(config);
 
-            // Verify new record count
+            // Verify new record count after monitoring cycle
             const newResults = await this.database.getResults('-30 days');
             const newRecords = newResults.length - existingResults.length;
             console.log(`📈 Added ${newRecords} new monitoring records`);
             console.log(`📊 Total database records: ${newResults.length}`);
 
-            // Generate static files for GitHub Pages
+            // Generate static API files for GitHub Pages dashboard
             await this.generateStaticFiles();
 
             // Cleanup old data to prevent database bloat
@@ -61,7 +58,7 @@ class HeadlessApplication {
         const jsonPath = 'config.json';
 
         try {
-            // CSV-based configuration (recommended)
+            // CSV-based configuration (recommended for easy URL management)
             console.log(`Loading configuration from CSV: ${csvPath}`);
             return await ConfigLoader.loadFromCSV(csvPath, {
                 defaultInterval: 60000, // Single check, interval doesn't matter
@@ -71,7 +68,7 @@ class HeadlessApplication {
             console.warn(`CSV loading failed: ${csvError}. Trying JSON fallback...`);
             
             try {
-                // JSON configuration fallback
+                // JSON configuration fallback (legacy support)
                 return await ConfigLoader.loadFromJSON(jsonPath);
             } catch (jsonError) {
                 throw new Error(`Failed to load configuration from both CSV and JSON: ${csvError}, ${jsonError}`);
@@ -87,24 +84,33 @@ class HeadlessApplication {
                 console.log(`Checking: ${urlConfig.name} (${urlConfig.url})`);
                 
                 const startTime = Date.now();
+                
+                // Prepare headers for HTTP request (like curl command)
+                const headers: Record<string, string> = {
+                    'User-Agent': 'URL-Monitor/1.0 (GitHub-Actions)',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
+                };
+
+                // Add country-specific cookies if countryCode is provided
+                if (urlConfig.countryCode) {
+                    headers['Cookie'] = `country=${urlConfig.countryCode}; region=AUTO`;
+                }
+
                 const response = await fetch(urlConfig.url, {
                     method: 'GET',
-                    headers: {
-                        'User-Agent': 'URL-Monitor/1.0 (GitHub-Actions)',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                        'Accept-Encoding': 'gzip, deflate',
-                        'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1'
-                    },
+                    headers,
                     signal: AbortSignal.timeout(config.timeout || 30000)
                 });
 
                 const responseTime = Date.now() - startTime;
                 const success = response.ok;
 
-                await this.database.insertResult({
+                const result: RequestResult = {
                     url: urlConfig.url,
                     name: urlConfig.name,
                     countryCode: urlConfig.countryCode,
@@ -114,14 +120,15 @@ class HeadlessApplication {
                     responseTime,
                     success,
                     error: success ? undefined : `HTTP ${response.status}`
-                });
+                };
 
+                await this.database.insertResult(result);
                 console.log(`✅ ${urlConfig.name}: ${response.status} (${responseTime}ms)`);
 
             } catch (error: any) {
                 const responseTime = Date.now() - Date.now();
                 
-                await this.database.insertResult({
+                const result: RequestResult = {
                     url: urlConfig.url,
                     name: urlConfig.name,
                     countryCode: urlConfig.countryCode,
@@ -131,8 +138,9 @@ class HeadlessApplication {
                     responseTime,
                     success: false,
                     error: error.message || 'Request failed'
-                });
+                };
 
+                await this.database.insertResult(result);
                 console.log(`❌ ${urlConfig.name}: ${error.message}`);
             }
         });
@@ -145,7 +153,7 @@ class HeadlessApplication {
         try {
             console.log('📄 Generating static API files for GitHub Pages...');
 
-            // Ensure public/api directory exists
+            // Ensure public/api directory exists for dashboard
             const apiDir = path.join('public', 'api');
             await fs.mkdir(apiDir, { recursive: true });
 
@@ -197,7 +205,7 @@ class HeadlessApplication {
     }
 }
 
-// Run if this file is executed directly
+// Run if this file is executed directly (headless mode for CI/CD)
 if (require.main === module) {
     const app = new HeadlessApplication();
     app.run().catch((error) => {
