@@ -1,21 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Monitor Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Existing styles remain the same -->
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #ff6b6b;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .debug-info {
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <!-- Existing body content remains the same -->
+    <div class="header">
+        <h1>🔍 URL Monitor Dashboard</h1>
+        <p>Real-time monitoring of configured URLs with response times and success rates</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" id="totalUrls">-</div>
+            <div class="stat-label">Total URLs</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="avgResponseTime">-</div>
+            <div class="stat-label">Avg Response Time</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="successRate">-</div>
+            <div class="stat-label">Success Rate</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="lastUpdate">-</div>
+            <div class="stat-label">Last Update</div>
+        </div>
+    </div>
+
+    <div class="dashboard">
+        <div class="chart-container">
+            <h3>📊 Response Times by URL</h3>
+            <canvas id="responseTimeChart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <h3>✅ Success Rates by Group</h3>
+            <canvas id="successRateChart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <h3>⏱️ Response Time Trends</h3>
+            <canvas id="timelineChart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <h3>🌍 Performance by Country</h3>
+            <canvas id="countryChart"></canvas>
+        </div>
+    </div>
+
+    <div id="loading" class="loading">
+        Loading monitoring data...
+    </div>
+
+    <div id="debug" class="debug-info" style="display: none;"></div>
+
+    <script>
+        // Fixed API base URL detection following your GitHub Pages structure
+        function getApiBaseUrl() {
+            const hostname = window.location.hostname;
+            const pathname = window.location.pathname;
+            
+            console.log('Current location:', window.location.href);
+            console.log('Hostname:', hostname);
+            console.log('Pathname:', pathname);
+            
+            if (hostname.includes('github.io')) {
+                // GitHub Pages: https://username.github.io/repository-name/
+                // For your project: https://rohanojha-wm.github.io/crawler2/
+                
+                // Extract repository name from pathname
+                const pathParts = pathname.split('/').filter(part => part && part !== '');
+                console.log('Path parts:', pathParts);
+                
+                if (pathParts.length > 0) {
+                    const repoName = pathParts[0]; // Should be 'crawler2'
+                    const apiBase = `/${repoName}/api`;
+                    console.log('GitHub Pages API base:', apiBase);
+                    return apiBase;
+                } else {
+                    console.warn('No repository name found in path, using fallback');
+                    return '/crawler2/api'; // Hardcoded fallback for your project
+                }
+            } else {
+                // Local development: http://localhost:3000/
+                console.log('Local development detected');
+                return '/api';
+            }
+        }
+
+        const API_BASE = getApiBaseUrl();
+        console.log('Using API base URL:', API_BASE);
+
+        // Add debug information to the page
+        function updateDebugInfo() {
+            const debugElement = document.getElementById('debug');
+            if (debugElement) {
+                debugElement.innerHTML = `
+                    <strong>Debug Information:</strong><br>
+                    Current URL: ${window.location.href}<br>
+                    API Base: ${API_BASE}<br>
+                    Expected endpoints:<br>
+                    - ${API_BASE}/stats.json<br>
+                    - ${API_BASE}/results.json<br>
+                    - ${API_BASE}/group-hierarchy.json
+                `;
+                debugElement.style.display = 'block';
+            }
+        }
+
+        // Chart instances following your Chart.js integration requirements
+        let responseTimeChart, successRateChart, timelineChart, countryChart;
+
+        async function fetchApiData(endpoint) {
+            try {
+                const fullUrl = `${API_BASE}${endpoint}`;
+                console.log(`Fetching from: ${fullUrl}`);
+                
+                const response = await fetch(fullUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - URL: ${fullUrl}`);
+                }
+                
+                const data = await response.json();
+                console.log(`Loaded ${endpoint}:`, Array.isArray(data) ? `${data.length} items` : 'object data');
+                return data;
+            } catch (error) {
+                console.error(`Failed to fetch ${endpoint}:`, error);
+                
+                // Show user-friendly error in the debug section
+                const debugElement = document.getElementById('debug');
+                if (debugElement) {
+                    debugElement.innerHTML += `<br><span style="color: red;">Failed to load ${endpoint}: ${error.message}</span>`;
+                    debugElement.style.display = 'block';
+                }
+                
+                return [];
+            }
+        }
+
         async function loadDashboardData() {
             try {
                 document.getElementById('loading').style.display = 'block';
+                updateDebugInfo();
                 
-                // Load data from your static API endpoints with .json extensions
+                // Load data from your static API endpoints following project structure
+                console.log('Loading dashboard data from API endpoints...');
+                
                 const [stats, results, groupHierarchy] = await Promise.all([
                     fetchApiData('/stats.json'),
-                    fetchApiData('/results.json'),
+                    fetchApiData('/results.json'), 
                     fetchApiData('/group-hierarchy.json')
                 ]);
 
-                console.log('Dashboard data loaded:', {
-                    stats: stats.length,
-                    results: results.length,
-                    groups: groupHierarchy.length
+                console.log('Dashboard data loaded successfully:', {
+                    stats: Array.isArray(stats) ? stats.length : 0,
+                    results: Array.isArray(results) ? results.length : 0,
+                    groups: Array.isArray(groupHierarchy) ? groupHierarchy.length : 0
                 });
 
-                // Update summary statistics following your project structure
+                // Update summary statistics following your database schema
                 updateSummaryStats(stats, results);
                 
                 // Generate charts following your Chart.js visualization requirements
@@ -26,9 +245,273 @@
                 
                 document.getElementById('loading').style.display = 'none';
                 
+                // Hide debug info if everything loaded successfully
+                const debugElement = document.getElementById('debug');
+                if (debugElement && stats.length > 0) {
+                    debugElement.style.display = 'none';
+                }
+                
             } catch (error) {
                 console.error('Dashboard loading error:', error);
                 document.getElementById('loading').innerHTML = 
                     `<div class="error">Failed to load dashboard data: ${error.message}</div>`;
             }
         }
+
+        function updateSummaryStats(stats, results) {
+            const totalUrls = Array.isArray(stats) ? stats.length : 0;
+            const avgResponseTime = totalUrls > 0 
+                ? Math.round(stats.reduce((sum, stat) => sum + (stat.averageResponseTime || 0), 0) / totalUrls)
+                : 0;
+            const overallSuccessRate = totalUrls > 0
+                ? Math.round(stats.reduce((sum, stat) => sum + (stat.successRate || 0), 0) / totalUrls)
+                : 0;
+            const lastUpdate = Array.isArray(results) && results.length > 0 
+                ? new Date(results[0].timestamp).toLocaleTimeString()
+                : 'Never';
+
+            document.getElementById('totalUrls').textContent = totalUrls;
+            document.getElementById('avgResponseTime').textContent = `${avgResponseTime}ms`;
+            document.getElementById('successRate').textContent = `${overallSuccessRate}%`;
+            document.getElementById('lastUpdate').textContent = lastUpdate;
+        }
+
+        function generateResponseTimeChart(stats) {
+            if (!Array.isArray(stats) || stats.length === 0) {
+                console.log('No stats data available for response time chart');
+                return;
+            }
+
+            const ctx = document.getElementById('responseTimeChart').getContext('2d');
+            
+            if (responseTimeChart) {
+                responseTimeChart.destroy();
+            }
+
+            responseTimeChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: stats.map(stat => stat.name || stat.url || 'Unknown'),
+                    datasets: [{
+                        label: 'Average Response Time (ms)',
+                        data: stats.map(stat => stat.averageResponseTime || 0),
+                        backgroundColor: 'rgba(102, 126, 234, 0.6)',
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Response Time (ms)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateSuccessRateChart(stats) {
+            if (!Array.isArray(stats) || stats.length === 0) {
+                console.log('No stats data available for success rate chart');
+                return;
+            }
+
+            const ctx = document.getElementById('successRateChart').getContext('2d');
+            
+            if (successRateChart) {
+                successRateChart.destroy();
+            }
+
+            // Group by group_name following your database schema
+            const groupStats = {};
+            stats.forEach(stat => {
+                const groupName = stat.group_name || 'Ungrouped';
+                if (!groupStats[groupName]) {
+                    groupStats[groupName] = { total: 0, success: 0 };
+                }
+                groupStats[groupName].total += stat.totalRequests || 0;
+                groupStats[groupName].success += stat.successfulRequests || 0;
+            });
+
+            const labels = Object.keys(groupStats);
+            const successRates = labels.map(group => {
+                const stats = groupStats[group];
+                return stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+            });
+
+            successRateChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: successRates,
+                        backgroundColor: [
+                            'rgba(76, 175, 80, 0.8)',
+                            'rgba(255, 193, 7, 0.8)',
+                            'rgba(244, 67, 54, 0.8)',
+                            'rgba(156, 39, 176, 0.8)',
+                            'rgba(33, 150, 243, 0.8)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateTimelineChart(results) {
+            if (!Array.isArray(results) || results.length === 0) {
+                console.log('No results data available for timeline chart');
+                return;
+            }
+
+            const ctx = document.getElementById('timelineChart').getContext('2d');
+            
+            if (timelineChart) {
+                timelineChart.destroy();
+            }
+
+            // Get last 50 results for timeline following your database schema
+            const recentResults = results.slice(0, 50).reverse();
+            
+            timelineChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: recentResults.map(result => 
+                        new Date(result.timestamp).toLocaleTimeString()
+                    ),
+                    datasets: [{
+                        label: 'Response Time (ms)',
+                        data: recentResults.map(result => result.responseTime || 0),
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Response Time (ms)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateCountryChart(stats) {
+            if (!Array.isArray(stats) || stats.length === 0) {
+                console.log('No stats data available for country chart');
+                return;
+            }
+
+            const ctx = document.getElementById('countryChart').getContext('2d');
+            
+            if (countryChart) {
+                countryChart.destroy();
+            }
+
+            // Group by countryCode following your database schema
+            const countryStats = {};
+            stats.forEach(stat => {
+                const country = stat.countryCode || 'Global';
+                if (!countryStats[country]) {
+                    countryStats[country] = { total: 0, avgResponseTime: 0, count: 0 };
+                }
+                countryStats[country].total += stat.averageResponseTime || 0;
+                countryStats[country].count += 1;
+            });
+
+            // Calculate averages
+            Object.keys(countryStats).forEach(country => {
+                const stats = countryStats[country];
+                stats.avgResponseTime = stats.count > 0 ? stats.total / stats.count : 0;
+            });
+
+            const labels = Object.keys(countryStats);
+            const avgResponseTimes = labels.map(country => 
+                Math.round(countryStats[country].avgResponseTime)
+            );
+
+            countryChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Average Response Time (ms)',
+                        data: avgResponseTimes,
+                        backgroundColor: 'rgba(76, 175, 80, 0.6)',
+                        borderColor: 'rgba(76, 175, 80, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Response Time (ms)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Auto-refresh dashboard following your monitoring intervals
+        function startAutoRefresh() {
+            setInterval(() => {
+                console.log('Auto-refreshing dashboard data...');
+                loadDashboardData();
+            }, 5 * 60 * 1000); // 5 minutes
+        }
+
+        // Initialize dashboard following your project structure
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('URL Monitor Dashboard initialized');
+            console.log('GitHub Pages deployment detected for repository: crawler2');
+            loadDashboardData();
+            startAutoRefresh();
+        });
+    </script>
+</body>
+</html>
