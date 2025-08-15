@@ -20,8 +20,9 @@ class Application {
         try {
             console.log('🚀 Starting URL Monitor Application...');
 
-            // Initialize database with proper schema
-            await this.database.initialize();
+            // Initialize database with consistent naming
+            const dbPath = process.env.DATABASE_PATH || 'monitor.db';
+            await this.database.initialize(dbPath);
             console.log('✅ Database initialized with monitoring schema');
 
             // Load configuration from CSV (recommended) or JSON (legacy)
@@ -41,7 +42,7 @@ class Application {
 
             console.log('🎉 Application started successfully!');
             console.log('📊 Dashboard: http://localhost:3000');
-            console.log('🔗 Test API: http://localhost:3000/api/group-hierarchy');
+            console.log('🔗 Test API: http://localhost:3000/api/stats');
 
         } catch (error: any) {
             console.error('❌ Failed to start application:', error.message);

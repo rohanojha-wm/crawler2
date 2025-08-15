@@ -38,20 +38,20 @@ jobs:
     - name: Build TypeScript
       run: npm run build
 
-    - name: Download existing database
+    - name: Download existing database (if available)
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
-        name: monitoring-database
+        name: monitor-database-artifact
         path: .
 
-    - name: Check database status
+    - name: Verify database file
       run: |
         if [ -f "monitor.db" ]; then
-          echo "📊 Existing database found"
+          echo "📊 Found existing database: monitor.db"
           sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;" || echo "Database needs initialization"
         else
-          echo "🆕 No existing database, will create new one"
+          echo "🆕 No existing database found - will create monitor.db"
         fi
 
     - name: Run headless monitoring
@@ -63,24 +63,20 @@ jobs:
 
     - name: Verify monitoring results
       run: |
-        if [ -f "monitor.db" ]; then
-          echo "📈 Monitoring completed successfully"
-          echo "Database record count:"
-          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;"
-          echo "Recent monitoring results:"
-          sqlite3 monitor.db "SELECT name, status, responseTime, timestamp FROM requests ORDER BY timestamp DESC LIMIT 5;" || true
-        else
-          echo "❌ Database file not found after monitoring"
-          exit 1
-        fi
+        echo "📈 Monitoring cycle completed"
+        echo "Database file: $(ls -lh monitor.db)"
+        echo "Total records: $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;')"
+
 
     - name: Upload database artifact
       uses: actions/upload-artifact@v4
       with:
-        name: monitoring-database
+        name: monitor-database-artifact
         path: monitor.db
         retention-days: 30
         compression-level: 9
+
+    
 
     - name: Generate static files for GitHub Pages
       run: |

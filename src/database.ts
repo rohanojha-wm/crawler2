@@ -7,12 +7,13 @@ export class Database {
 
     async initialize(dbPath: string = 'monitor.db'): Promise<void> {
         try {
+            console.log(`Initializing database: ${dbPath}`);
             this.db = await open({
                 filename: dbPath,
                 driver: sqlite3.Database
             });
 
-            // Create main requests table following the schema: id, url, name, timestamp, status, responseTime, success, error
+            // Create main requests table following your schema: id, url, name, timestamp, status, responseTime, success, error
             await this.db.exec(`
                 CREATE TABLE IF NOT EXISTS requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,19 +29,6 @@ export class Database {
                 )
             `);
 
-            // Add new columns for group functionality (graceful migration)
-            try {
-                await this.db.exec('ALTER TABLE requests ADD COLUMN countryCode TEXT');
-            } catch (error) {
-                // Column already exists
-            }
-            
-            try {
-                await this.db.exec('ALTER TABLE requests ADD COLUMN group_name TEXT');
-            } catch (error) {
-                // Column already exists
-            }
-
             // Create indexes for better query performance
             await this.db.exec(`
                 CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
@@ -49,9 +37,9 @@ export class Database {
                 CREATE INDEX IF NOT EXISTS idx_requests_country ON requests(countryCode);
             `);
 
-            console.log(`Database initialized successfully: ${dbPath}`);
+            console.log(`✅ Database initialized successfully: ${dbPath}`);
         } catch (error: any) {
-            console.error('Database initialization failed:', error.message);
+            console.error('❌ Database initialization failed:', error.message);
             throw error;
         }
     }

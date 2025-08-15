@@ -15,8 +15,10 @@ class HeadlessApplication {
         try {
             console.log('🤖 Starting Headless URL Monitor...');
 
-            // Initialize SQLite database for storing monitoring results
+             // Initialize SQLite database with consistent naming
             const dbPath = process.env.DATABASE_PATH || 'monitor.db';
+            console.log(`Using database file: ${dbPath}`);
+            
             await this.database.initialize(dbPath);
             console.log(`✅ Database initialized: ${dbPath}`);
 
