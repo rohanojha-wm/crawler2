@@ -298,792 +298,391 @@
         </div>
     </div>
 
-    <script>
-        let responseTimeChart;
-        let statusCodeChart;
-        let drilldownState = { group: null, countryCode: null };
-        let groupHierarchy = [];
-        let timeRangeHours = 24; // Default 24 hours, configurable
+<script>
+let responseTimeChart;
+let statusCodeChart;
+let drilldownState = { group: null, countryCode: null };
+let groupHierarchy = [];
+let timeRangeHours = 24; // Default 24 hours, configurable
 
-        // Detect if we're running in static mode (GitHub Pages) or with live API
-        const isStaticMode = window.location.hostname.includes('github.io') || 
-                           window.location.protocol === 'file:';
+const isStaticMode = window.location.hostname.includes('github.io') || 
+                   window.location.protocol === 'file:';
 
-        console.log('Static mode detected:', isStaticMode, 'hostname:', window.location.hostname, 'protocol:', window.location.protocol, 'port:', window.location.port);
+console.log('Static mode detected:', isStaticMode, 'hostname:', window.location.hostname, 'protocol:', window.location.protocol, 'port:', window.location.port);
 
-        function updateTimestamp() {
-            const now = new Date();
-            const timeString = now.toLocaleTimeString('en-US', { 
-                hour12: false, 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-            });
-            const dateString = now.toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: '2-digit' 
-            });
-            document.getElementById('lastUpdated').innerHTML = `🕒 Updated: ${dateString} ${timeString}`;
-        }
+function updateTimestamp() {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { 
+        hour12: false, 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit' 
+    });
+    const dateString = now.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: '2-digit' 
+    });
+    document.getElementById('lastUpdated').innerHTML = `🕒 Updated: ${dateString} ${timeString}`;
+}
 
-        async function fetchWithFallback(apiPath, staticFile) {
-            try {
-                console.log('fetchWithFallback: called with apiPath:', apiPath, 'staticFile:', staticFile, 'isStaticMode:', isStaticMode);
-                // Try live API first
-                if (!isStaticMode) {
-                    console.log('fetchWithFallback: trying live API...');
-                    const response = await fetch(apiPath);
-                    console.log('fetchWithFallback: live API response:', response.status, response.ok);
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log('fetchWithFallback: live API data:', data);
-                        return data;
-                    }
-                }
-                
-                // Fallback to static JSON file with cache busting
-                // Note: Static files don't support query parameters, so we just fetch the base file
-                console.log('fetchWithFallback: falling back to static file...');
-                const cacheBuster = Date.now();
-                const response = await fetch(`${staticFile}?v=${cacheBuster}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    console.log('Fetched from static file:', staticFile, 'records:', data.length);
-                    return data;
-                }
-                
-                console.log('fetchWithFallback: no data available, returning empty array');
-                return [];
-            } catch (error) {
-                console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
-                return [];
-            }
-        }
-
-
-        async function fetchGroupHierarchy() {
-            // Only live mode supported for drilldown
-            const response = await fetch('/api/group-hierarchy');
+async function fetchWithFallback(apiPath, staticFile) {
+    try {
+        if (!isStaticMode) {
+            const response = await fetch(apiPath);
             if (response.ok) {
-                groupHierarchy = await response.json();
-                return groupHierarchy;
-            }
-            return [];
-        }
-
-        async function fetchUrlsByGroup(groupName) {
-            try {
-                // Get all results data and extract URLs for this group
-                const results = await fetchResults('-24 hours'); // This will now handle static mode properly
-                
-                console.log('fetchUrlsByGroup - Total results:', results.length, 'for group:', groupName);
-                
-                // Filter results by group and calculate stats per URL
-                const groupUrls = new Map();
-                
-                results.forEach(result => {
-                    let resultGroup = 'Other';
-                    if (result.name.includes('Max') || result.url.includes('max.com')) {
-                        resultGroup = 'Max Streaming';
-                    } else if (result.name.includes('D+') || result.name.includes('Discovery') || result.url.includes('discoveryplus')) {
-                        resultGroup = 'Discovery Plus';
-                    }
-                    
-                    if (resultGroup === groupName) {
-                        const urlKey = result.url;
-                        if (!groupUrls.has(urlKey)) {
-                            groupUrls.set(urlKey, {
-                                name: result.name,
-                                url: result.url,
-                                total_requests: 0,
-                                successful_requests: 0,
-                                total_response_time: 0,
-                                success_rate: 0,
-                                avg_response_time: 0
-                            });
-                        }
-                        
-                        const urlStats = groupUrls.get(urlKey);
-                        urlStats.total_requests++;
-                        urlStats.total_response_time += result.responseTime || 0;
-                        
-                        if (result.success || (result.status >= 200 && result.status < 300)) {
-                            urlStats.successful_requests++;
-                        }
-                    }
-                });
-                
-                // Calculate final stats
-                const urlsArray = Array.from(groupUrls.values()).map(url => {
-                    url.success_rate = url.total_requests > 0 ? (url.successful_requests / url.total_requests) * 100 : 0;
-                    url.avg_response_time = url.total_requests > 0 ? url.total_response_time / url.total_requests : 0;
-                    return url;
-                });
-                
-                console.log('fetchUrlsByGroup - URLs found:', urlsArray.length, urlsArray);
-                return urlsArray;
-            } catch (error) {
-                console.error('Error fetching URLs by group:', error);
-                return [];
+                return await response.json();
             }
         }
+        const cacheBuster = Date.now();
+        const response = await fetch(`${staticFile}?v=${cacheBuster}`);
+        if (response.ok) {
+            return await response.json();
+        }
+        return [];
+    } catch (error) {
+        console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
+        return [];
+    }
+}
 
-        async function fetchStatusCodes(timeRange = '-24 hours', groupName = null) {
-            let apiUrl = `/api/status-codes?timeRange=${encodeURIComponent(timeRange)}`;
+async function fetchGroupHierarchy() {
+    const response = await fetch('/api/group-hierarchy');
+    if (response.ok) {
+        groupHierarchy = await response.json();
+        return groupHierarchy;
+    }
+    return [];
+}
+
+async function fetchResults(timeRange = '-24 hours', groupName = null) {
+    try {
+        let results;
+        if (isStaticMode) {
+            const cacheBuster = Date.now();
+            const response = await fetch(`./api/results.json?v=${cacheBuster}`);
+            if (response.ok) {
+                const allResults = await response.json();
+                const now = new Date();
+                const timeFilterMs = timeRangeHours * 60 * 60 * 1000;
+                const cutoffTime = new Date(now.getTime() - timeFilterMs);
+                results = allResults.filter(result => {
+                    const resultTime = new Date(result.timestamp);
+                    return resultTime >= cutoffTime;
+                });
+            } else {
+                results = [];
+            }
+        } else {
+            let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
             if (groupName) {
                 apiUrl += `&group=${encodeURIComponent(groupName)}`;
             }
-            return await fetchWithFallback(apiUrl, './api/status-codes.json');
-        }
-
-        async function fetchResults(timeRange = '-24 hours', groupName = null) {
-            try {
-                let results;
-                
-                if (isStaticMode) {
-                    // In static mode, fetch all data and filter client-side
-                    console.log('Static mode: fetching all results and filtering client-side');
-                    const cacheBuster = Date.now();
-                    const response = await fetch(`./api/results.json?v=${cacheBuster}`);
-                    if (response.ok) {
-                        const allResults = await response.json();
-                        console.log('Static mode: fetched', allResults.length, 'total results');
-                        
-                        // Filter by time range client-side using configurable hours
-                        const now = new Date();
-                        const timeFilterMs = timeRangeHours * 60 * 60 * 1000; // Convert hours to milliseconds
-                        const cutoffTime = new Date(now.getTime() - timeFilterMs);
-                        
-                        results = allResults.filter(result => {
-                            const resultTime = new Date(result.timestamp);
-                            return resultTime >= cutoffTime;
-                        });
-                        
-                        console.log('Static mode: filtered to', results.length, 'results within last', timeRangeHours, 'hours');
-                    } else {
-                        console.log('Static mode: no results.json file found');
-                        results = [];
-                    }
-                } else {
-                    // In live mode, use server-side filtering
-                    let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
-                    if (groupName) {
-                        apiUrl += `&group=${encodeURIComponent(groupName)}`;
-                    }
-                    console.log('Live mode: fetching from', apiUrl);
-                    const response = await fetch(apiUrl);
-                    if (response.ok) {
-                        results = await response.json();
-                    } else {
-                        results = [];
-                    }
-                }
-                
-                console.log('fetchResults returned:', results.length, 'results for timeRange:', timeRange, 'groupName:', groupName);
-                return results;
-            } catch (error) {
-                console.error('Error in fetchResults:', error);
-                return [];
-            }
-        }
-
-        function getStatusColor(status) {
-            if (status >= 200 && status < 300) return '#28a745'; // Success - Green
-            if (status >= 300 && status < 400) return '#ffc107'; // Redirect - Yellow
-            if (status >= 400 && status < 500) return '#fd7e14'; // Client Error - Orange
-            if (status >= 500) return '#dc3545'; // Server Error - Red
-            return '#6c757d'; // Unknown - Gray
-        }
-
-        function getStatusText(status) {
-            if (status >= 200 && status < 300) return 'Success';
-            if (status >= 300 && status < 400) return 'Redirect';
-            if (status >= 400 && status < 500) return 'Client Error';
-            if (status >= 500) return 'Server Error';
-            return 'Unknown';
-        }
-
-
-        function renderDrilldown() {
-            const nav = document.getElementById('drilldownNav');
-            const grid = document.getElementById('drilldownGrid');
-            // Build navigation
-            let navHtml = '';
-            if (drilldownState.group) {
-                navHtml += `<button class="back-btn" onclick="drilldownBack('group')">⬅️ Back to Groups</button> `;
-                navHtml += `<span style="font-weight:600;">${drilldownState.group}</span>`;
-            }
-            if (drilldownState.countryCode) {
-                navHtml += ` &raquo; <button class="back-btn" onclick="drilldownBack('countryCode')">⬅️ Back to Countries</button> <span style="font-weight:600;">${drilldownState.countryCode}</span>`;
-            }
-            nav.style.display = navHtml ? 'block' : 'none';
-            nav.innerHTML = navHtml;
-
-            // Filter hierarchy for current drilldown
-            if (!drilldownState.group) {
-                // Show groups
-                const groups = [...new Set(groupHierarchy.map(g => g.group_name))];
-                grid.innerHTML = groups.map(group => `<div class="group-card" onclick="drilldownSelect('group','${group}')"><h3>${group}</h3></div>`).join('');
-            } else if (!drilldownState.countryCode) {
-                // Show countryCodes in group
-                const countries = groupHierarchy.filter(g => g.group_name === drilldownState.group).map(g => g.countryCode);
-                grid.innerHTML = countries.map(cc => `<div class="group-card" onclick="drilldownSelect('countryCode','${cc}')"><h3>${cc}</h3></div>`).join('');
+            const response = await fetch(apiUrl);
+            if (response.ok) {
+                results = await response.json();
             } else {
-                // Show URLs in group/countryCode
-                const urls = groupHierarchy.find(g => g.group_name === drilldownState.group && g.countryCode === drilldownState.countryCode)?.urls || [];
-                if (urls.length === 0) {
-                    grid.innerHTML = '<div class="loading">No URLs found in this group/country.</div>';
-                } else {
-                    grid.innerHTML = urls.map(url => `<div class="stat-card"><h3>${url.name}</h3><small style='color:#666;font-size:12px;'>${url.url}</small></div>`).join('');
-                }
+                results = [];
             }
         }
-        function renderDrilldown() {
-            const nav = document.getElementById('drilldownNav');
-            const grid = document.getElementById('drilldownGrid');
-            // Build navigation
-            let navHtml = '';
-            if (drilldownState.group) {
-                navHtml += `<button class="back-btn" onclick="drilldownBack('group')">⬅️ Back to Groups</button> `;
-                navHtml += `<span style="font-weight:600;">${drilldownState.group}</span>`;
-            }
-            if (drilldownState.countryCode) {
-                navHtml += ` &raquo; <button class=\"back-btn\" onclick=\"drilldownBack('countryCode')\">⬅️ Back to Countries</button> <span style=\"font-weight:600;\">${drilldownState.countryCode}</span>`;
-            }
-            nav.style.display = navHtml ? 'block' : 'none';
-            nav.innerHTML = navHtml;
+        return results;
+    } catch (error) {
+        console.error('Error in fetchResults:', error);
+        return [];
+    }
+}
 
-            // Filter hierarchy for current drilldown
-            if (!drilldownState.group) {
-                // Show groups with failed request count
-                const groups = [...new Set(groupHierarchy.map(g => g.group_name))];
-                fetchResults('-24 hours').then(results => {
-                    grid.innerHTML = groups.map(group => {
-                        const groupResults = results.filter(r => r.group_name === group);
-                        const total = groupResults.length;
-                        const failed = groupResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
-                        const success = groupResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
-                        const successRate = total > 0 ? (success / total) * 100 : 0;
-                        return `<div class=\"group-card\" onclick=\"drilldownSelect('group','${group}')\"><h3>${group}</h3>
-                            <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
-                            <small>Success Rate</small>
-                            <hr style='margin: 10px 0;'>
-                            <div class='stat-value'>${total}</div>
-                            <small>Total Requests</small>
-                            <hr style='margin: 10px 0;'>
-                            <div class='stat-value danger'>${failed}</div>
-                            <small>Failed Requests</small>
-                        </div>`;
-                    }).join('');
-                });
-                updateChartsForDrilldown();
-            } else if (!drilldownState.countryCode) {
-                // Show countryCodes in group with failed request count
-                const countries = groupHierarchy.filter(g => g.group_name === drilldownState.group).map(g => g.countryCode);
-                fetchResults('-24 hours').then(results => {
-                    grid.innerHTML = countries.map(cc => {
-                        const ccResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === cc);
-                        const total = ccResults.length;
-                        const failed = ccResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
-                        const success = ccResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
-                        const successRate = total > 0 ? (success / total) * 100 : 0;
-                        return `<div class=\"group-card\" onclick=\"drilldownSelect('countryCode','${cc}')\"><h3>${cc}</h3>
-                            <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
-                            <small>Success Rate</small>
-                            <hr style='margin: 10px 0;'>
-                            <div class='stat-value'>${total}</div>
-                            <small>Total Requests</small>
-                            <hr style='margin: 10px 0;'>
-                            <div class='stat-value danger'>${failed}</div>
-                            <small>Failed Requests</small>
-                        </div>`;
-                    }).join('');
-                });
-                updateChartsForDrilldown(drilldownState.group);
-            } else {
-                // Show URLs in group/countryCode with failed request count
-                const urls = groupHierarchy.find(g => g.group_name === drilldownState.group && g.countryCode === drilldownState.countryCode)?.urls || [];
-                if (urls.length === 0) {
-                    grid.innerHTML = '<div class="loading">No URLs found in this group/country.</div>';
-                } else {
-                    fetchResults('-24 hours').then(results => {
-                        grid.innerHTML = urls.map(url => {
-                            const urlResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === drilldownState.countryCode && r.url === url.url);
-                            const total = urlResults.length;
-                            const failed = urlResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
-                            const success = urlResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
-                            const successRate = total > 0 ? (success / total) * 100 : 0;
-                            return `<div class=\"stat-card\"><h3>${url.name}</h3><small style='color:#666;font-size:12px;'>${url.url}</small>
-                                <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
-                                <small>Success Rate</small>
-                                <hr style='margin: 10px 0;'>
-                                <div class='stat-value'>${total}</div>
-                                <small>Total Requests</small>
-                                <hr style='margin: 10px 0;'>
-                                <div class='stat-value danger'>${failed}</div>
-                                <small>Failed Requests</small>
-                            </div>`;
-                        }).join('');
-                    });
-                }
-                updateChartsForDrilldown(drilldownState.group, drilldownState.countryCode);
-            }
-        }
+function getStatusText(status) {
+    if (status >= 200 && status < 300) return 'Success';
+    if (status >= 300 && status < 400) return 'Redirect';
+    if (status >= 400 && status < 500) return 'Client Error';
+    if (status >= 500) return 'Server Error';
+    return 'Unknown';
+}
 
-        function updateChartsForDrilldown(group = null, countryCode = null, url = null) {
-            // Fetch results and filter by group/countryCode/url, then update charts
-            fetchResults('-24 hours').then(results => {
-                let filtered = results;
-                if (group) filtered = filtered.filter(r => r.group_name === group);
-                if (countryCode) filtered = filtered.filter(r => r.countryCode === countryCode);
-                if (url) filtered = filtered.filter(r => r.url === url);
-                createResponseTimeChartWithData(filtered);
-                createStatusCodeChartWithData(filtered);
-            });
-        }
+function renderDrilldown() {
+    const nav = document.getElementById('drilldownNav');
+    const grid = document.getElementById('drilldownGrid');
+    let navHtml = '';
+    if (drilldownState.group) {
+        navHtml += `<button class="back-btn" onclick="drilldownBack('group')">⬅️ Back to Groups</button> `;
+        navHtml += `<span style="font-weight:600;">${drilldownState.group}</span>`;
+    }
+    if (drilldownState.countryCode) {
+        navHtml += ` &raquo; <button class="back-btn" onclick="drilldownBack('countryCode')">⬅️ Back to Countries</button> <span style="font-weight:600;">${drilldownState.countryCode}</span>`;
+    }
+    nav.style.display = navHtml ? 'block' : 'none';
+    nav.innerHTML = navHtml;
 
-        function createResponseTimeChartWithData(results) {
-            const ctx = document.getElementById('responseTimeChart').getContext('2d');
-            if (responseTimeChart) responseTimeChart.destroy();
-            if (!results || results.length === 0) {
-                ctx.fillText('No data available', 10, 50);
-                return;
-            }
-            const groupedData = {};
-            let minTime = null, maxTime = null;
-            results.forEach(result => {
-                if (!result.name || !result.timestamp || result.responseTime === undefined) return;
-                if (!groupedData[result.name]) groupedData[result.name] = [];
-                const timestamp = new Date(result.timestamp);
-                if (isNaN(timestamp.getTime())) return;
-                groupedData[result.name].push({ x: timestamp, y: result.responseTime || 0 });
-                if (!minTime || timestamp < minTime) minTime = timestamp;
-                if (!maxTime || timestamp > maxTime) maxTime = timestamp;
-            });
-            let unit = 'hour';
-            if (minTime && maxTime) {
-                const diffMs = maxTime - minTime;
-                const diffHours = diffMs / (1000 * 60 * 60);
-                if (diffHours < 2) unit = 'minute';
-                else if (diffHours < 48) unit = 'hour';
-                else unit = 'day';
-            }
-            const datasets = Object.keys(groupedData).map((name, index) => ({
-                label: name,
-                data: groupedData[name],
-                borderColor: `hsl(${index * 60}, 70%, 50%)`,
-                backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
-                tension: 0.4,
-                pointRadius: 3,
-                pointHoverRadius: 6
-            }));
-            responseTimeChart = new Chart(ctx, {
-                type: 'line',
-                data: { datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { intersect: false, mode: 'index' },
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: {
-                                unit,
-                                displayFormats: { minute: 'MMM dd HH:mm', hour: 'MMM dd HH:mm', day: 'MMM dd' }
-                            },
-                            title: { display: true, text: 'Time' }
-                        },
-                        y: {
-                            beginAtZero: true,
-                            title: { display: true, text: 'Response Time (ms)' }
-                        }
-                    },
-                    plugins: {
-                        legend: { position: 'top' },
-                        title: { display: true, text: 'Response Time' }
-                    }
-                }
-            });
-        }
-
-        function createStatusCodeChartWithData(results) {
-            const ctx = document.getElementById('statusCodeChart').getContext('2d');
-            if (statusCodeChart) statusCodeChart.destroy();
-            if (!results || results.length === 0) {
-                ctx.fillText('No data available', 10, 50);
-                return;
-            }
-            const urlStatusCounts = {};
-            const statusCodesSet = new Set();
-            results.forEach(result => {
-                if (!result.name || !result.status) return;
-                if (!urlStatusCounts[result.name]) urlStatusCounts[result.name] = {};
-                urlStatusCounts[result.name][result.status] = (urlStatusCounts[result.name][result.status] || 0) + 1;
-                statusCodesSet.add(result.status);
-            });
-            const urls = Object.keys(urlStatusCounts);
-            const statusCodes = Array.from(statusCodesSet).sort((a, b) => a - b);
-            const datasets = statusCodes.map((status, idx) => ({
-                label: `${status} (${getStatusText(status)})`,
-                data: urls.map(url => urlStatusCounts[url][status] || 0),
-                backgroundColor: `hsl(${idx * 60}, 70%, 60%)`,
-                stack: 'status',
-            }));
-            statusCodeChart = new Chart(ctx, {
-                type: 'bar',
-                data: { labels: urls, datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Status Code Distribution'
-                        },
-                        legend: { display: true, position: 'top' },
-                        tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            callbacks: {
-                                label: function(context) {
-                                    return `${context.dataset.label}: ${context.parsed.y}`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: { stacked: true, title: { display: true, text: 'URL' } },
-                        y: { stacked: true, title: { display: true, text: 'Count' }, beginAtZero: true }
-                    }
-                }
-            });
-        }
-
-        function drilldownSelect(level, value) {
-            if (level === 'group') {
-                drilldownState.group = value;
-                drilldownState.countryCode = null;
-            } else if (level === 'countryCode') {
-                drilldownState.countryCode = value;
-            }
-            renderDrilldown();
-            // Optionally update charts here
-        }
-        function drilldownSelect(level, value) {
-            if (level === 'group') {
-                drilldownState.group = value;
-                drilldownState.countryCode = null;
-            } else if (level === 'countryCode') {
-                drilldownState.countryCode = value;
-            } else if (level === 'url') {
-                drilldownState.url = value;
-            }
-            renderDrilldown();
-        }
-
-        function drilldownBack(level) {
-            if (level === 'group') {
-                drilldownState.group = null;
-                drilldownState.countryCode = null;
-            } else if (level === 'countryCode') {
-                drilldownState.countryCode = null;
-            }
-            renderDrilldown();
-        }
-        function drilldownBack(level) {
-            if (level === 'group') {
-                drilldownState.group = null;
-                drilldownState.countryCode = null;
-                drilldownState.url = null;
-            } else if (level === 'countryCode') {
-                drilldownState.countryCode = null;
-                drilldownState.url = null;
-            }
-            renderDrilldown();
-        }
-
-        async function showGroupUrls(groupName) {
-            currentView = 'urls';
-            selectedGroup = groupName;
-            document.getElementById('groupsContainer').style.display = 'none';
-            document.getElementById('urlDetailsContainer').style.display = 'block';
-            document.getElementById('selectedGroupTitle').textContent = `URLs in ${groupName}`;
-
-            const urls = await fetchUrlsByGroup(groupName);
-            const container = document.getElementById('urlsList');
-
-            if (urls.length === 0) {
-                container.innerHTML = '<div class="loading">No URLs found in this group.</div>';
-                return;
-            }
-
-            container.innerHTML = urls.map(url => {
-                let successClass;
-                if (url.success_rate >= 95) {
-                    successClass = 'success';
-                } else if (url.success_rate >= 80) {
-                    successClass = 'warning';
-                } else {
-                    successClass = 'danger';
-                }
-                
-                return `
-                    <div class="stat-card">
-                        <h3>${url.name}</h3>
-                        <small style="color: #666; font-size: 12px;">${url.url}</small>
-                        <hr style="margin: 10px 0;">
-                        <div class="stat-value ${successClass}">${url.success_rate.toFixed(1)}%</div>
-                        <small>Success Rate</small>
-                        <hr style="margin: 10px 0;">
-                        <div class="stat-value">${Math.round(url.avg_response_time)}ms</div>
-                        <small>Avg Response Time</small>
-                        <hr style="margin: 10px 0;">
-                        <div class="stat-value">${url.total_requests}</div>
-                        <small>Total Requests</small>
-                    </div>
-                `;
+    if (!drilldownState.group) {
+        const groups = [...new Set(groupHierarchy.map(g => g.group_name))];
+        fetchResults('-24 hours').then(results => {
+            grid.innerHTML = groups.map(group => {
+                const groupResults = results.filter(r => r.group_name === group);
+                const total = groupResults.length;
+                const failed = groupResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                const success = groupResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                const successRate = total > 0 ? (success / total) * 100 : 0;
+                return `<div class="group-card" onclick="drilldownSelect('group','${group}')"><h3>${group}</h3>
+                    <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                    <small>Success Rate</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value'>${total}</div>
+                    <small>Total Requests</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value danger'>${failed}</div>
+                    <small>Failed Requests</small>
+                </div>`;
             }).join('');
-
-            // Update charts to show only this group's data
-            await createResponseTimeChart();
-            await createStatusCodeChart();
+        });
+        updateChartsForDrilldown();
+    } else if (!drilldownState.countryCode) {
+        const countries = groupHierarchy.filter(g => g.group_name === drilldownState.group).map(g => g.countryCode);
+        fetchResults('-24 hours').then(results => {
+            grid.innerHTML = countries.map(cc => {
+                const ccResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === cc);
+                const total = ccResults.length;
+                const failed = ccResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                const success = ccResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                const successRate = total > 0 ? (success / total) * 100 : 0;
+                return `<div class="group-card" onclick="drilldownSelect('countryCode','${cc}')"><h3>${cc}</h3>
+                    <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                    <small>Success Rate</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value'>${total}</div>
+                    <small>Total Requests</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value danger'>${failed}</div>
+                    <small>Failed Requests</small>
+                </div>`;
+            }).join('');
+        });
+        updateChartsForDrilldown(drilldownState.group);
+    } else {
+        const urls = groupHierarchy.find(g => g.group_name === drilldownState.group && g.countryCode === drilldownState.countryCode)?.urls || [];
+        if (urls.length === 0) {
+            grid.innerHTML = '<div class="loading">No URLs found in this group/country.</div>';
+        } else {
+            fetchResults('-24 hours').then(results => {
+                grid.innerHTML = urls.map(url => {
+                    const urlResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === drilldownState.countryCode && r.url === url.url);
+                    const total = urlResults.length;
+                    const failed = urlResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                    const success = urlResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                    const successRate = total > 0 ? (success / total) * 100 : 0;
+                    return `<div class="stat-card"><h3>${url.name}</h3><small style='color:#666;font-size:12px;'>${url.url}</small>
+                        <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                        <small>Success Rate</small>
+                        <hr style='margin: 10px 0;'>
+                        <div class='stat-value'>${total}</div>
+                        <small>Total Requests</small>
+                        <hr style='margin: 10px 0;'>
+                        <div class='stat-value danger'>${failed}</div>
+                        <small>Failed Requests</small>
+                    </div>`;
+                }).join('');
+            });
         }
+        updateChartsForDrilldown(drilldownState.group, drilldownState.countryCode);
+    }
+}
 
-        function showGroups() {
-            currentView = 'groups';
-            selectedGroup = null;
-            document.getElementById('groupsContainer').style.display = 'grid';
-            document.getElementById('urlDetailsContainer').style.display = 'none';
-            
-            // Update charts to show all URLs
-            createResponseTimeChart();
-            createStatusCodeChart();
-        }
+function drilldownSelect(level, value) {
+    if (level === 'group') {
+        drilldownState.group = value;
+        drilldownState.countryCode = null;
+    } else if (level === 'countryCode') {
+        drilldownState.countryCode = value;
+    }
+    renderDrilldown();
+}
 
-        function changeTimeRange() {
-            const selector = document.getElementById('timeRangeSelector');
-            timeRangeHours = parseInt(selector.value);
-            console.log('Time range changed to:', timeRangeHours, 'hours');
-            
-            // Update chart titles
-            const responseChartTitle = document.querySelector('.charts-container .chart-card:first-child h3');
-            const statusChartTitle = document.querySelector('.charts-container .chart-card:last-child h3');
-            
-            // Simple time text mapping
-            const timeTextMap = {
-                1: '1 Hour',
-                6: '6 Hours', 
-                12: '12 Hours',
-                24: '24 Hours',
-                48: '48 Hours',
-                72: '3 Days',
-                168: '7 Days'
-            };
-            const timeText = timeTextMap[timeRangeHours] || `${timeRangeHours} Hours`;
-            
-            responseChartTitle.textContent = `📊 Response Times by Group (Last ${timeText})`;
-            statusChartTitle.textContent = `🚦 Status Code Distribution (Last ${timeText})`;
-            
-            // Refresh all data with new time range
-            refreshData();
-        }
+function drilldownBack(level) {
+    if (level === 'group') {
+        drilldownState.group = null;
+        drilldownState.countryCode = null;
+    } else if (level === 'countryCode') {
+        drilldownState.countryCode = null;
+    }
+    renderDrilldown();
+}
 
-        async function createResponseTimeChart() {
-            console.log('Creating response time chart...');
-            const ctx = document.getElementById('responseTimeChart').getContext('2d');
-            const results = await fetchResults('-24 hours', selectedGroup);
-            
-            console.log('Results fetched:', results.length, 'records', 'for group:', selectedGroup);
-            
-            if (responseTimeChart) {
-                responseTimeChart.destroy();
-            }
+function updateChartsForDrilldown(group = null, countryCode = null, url = null) {
+    fetchResults('-24 hours').then(results => {
+        let filtered = results;
+        if (group) filtered = filtered.filter(r => r.group_name === group);
+        if (countryCode) filtered = filtered.filter(r => r.countryCode === countryCode);
+        if (url) filtered = filtered.filter(r => r.url === url);
+        createResponseTimeChartWithData(filtered);
+        createStatusCodeChartWithData(filtered);
+    });
+}
 
-            if (results.length === 0) {
-                console.log('No data available for chart');
-                ctx.fillText('No data available', 10, 50);
-                return;
-            }
-
-            const groupedData = {};
-            results.forEach(result => {
-                // Ensure we have valid data
-                if (!result.name || !result.timestamp || result.responseTime === undefined) {
-            if (responseTimeChart) responseTimeChart.destroy();
-            if (results.length === 0) {
-                ctx.fillText('No data available', 10, 50);
-                return;
-            }
-            const groupedData = {};
-            let minTime = null, maxTime = null;
-            results.forEach(result => {
-                if (!result.name || !result.timestamp || result.responseTime === undefined) return;
-                if (selectedGroup) {
-                    let resultGroup = 'Other';
-                    if (result.name.includes('Max') || result.url.includes('max.com')) resultGroup = 'Max Streaming';
-                    else if (result.name.includes('D+') || result.name.includes('Discovery') || result.url.includes('discoveryplus')) resultGroup = 'Discovery Plus';
-                    if (resultGroup !== selectedGroup) return;
+function createResponseTimeChartWithData(results) {
+    const ctx = document.getElementById('responseTimeChart').getContext('2d');
+    if (responseTimeChart) responseTimeChart.destroy();
+    if (!results || results.length === 0) {
+        ctx.fillText('No data available', 10, 50);
+        return;
+    }
+    const groupedData = {};
+    let minTime = null, maxTime = null;
+    results.forEach(result => {
+        if (!result.name || !result.timestamp || result.responseTime === undefined) return;
+        if (!groupedData[result.name]) groupedData[result.name] = [];
+        const timestamp = new Date(result.timestamp);
+        if (isNaN(timestamp.getTime())) return;
+        groupedData[result.name].push({ x: timestamp, y: result.responseTime || 0 });
+        if (!minTime || timestamp < minTime) minTime = timestamp;
+        if (!maxTime || timestamp > maxTime) maxTime = timestamp;
+    });
+    let unit = 'hour';
+    if (minTime && maxTime) {
+        const diffMs = maxTime - minTime;
+        const diffHours = diffMs / (1000 * 60 * 60);
+        if (diffHours < 2) unit = 'minute';
+        else if (diffHours < 48) unit = 'hour';
+        else unit = 'day';
+    }
+    const datasets = Object.keys(groupedData).map((name, index) => ({
+        label: name,
+        data: groupedData[name],
+        borderColor: `hsl(${index * 60}, 70%, 50%)`,
+        backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
+        tension: 0.4,
+        pointRadius: 3,
+        pointHoverRadius: 6
+    }));
+    responseTimeChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit,
+                        displayFormats: { minute: 'MMM dd HH:mm', hour: 'MMM dd HH:mm', day: 'MMM dd' }
+                    },
+                    title: { display: true, text: 'Time' }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Response Time (ms)' }
                 }
-                if (!groupedData[result.name]) groupedData[result.name] = [];
-                const timestamp = new Date(result.timestamp);
-                if (isNaN(timestamp.getTime())) return;
-                groupedData[result.name].push({ x: timestamp, y: result.responseTime || 0 });
-                if (!minTime || timestamp < minTime) minTime = timestamp;
-                if (!maxTime || timestamp > maxTime) maxTime = timestamp;
-            });
-            // Dynamically pick time unit
-            let unit = 'hour';
-            if (minTime && maxTime) {
-                const diffMs = maxTime - minTime;
-                const diffHours = diffMs / (1000 * 60 * 60);
-                if (diffHours < 2) unit = 'minute';
-                else if (diffHours < 48) unit = 'hour';
-                else unit = 'day';
+            },
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'Response Time' }
             }
-            const datasets = Object.keys(groupedData).map((name, index) => ({
-                label: name,
-                data: groupedData[name],
-                borderColor: `hsl(${index * 60}, 70%, 50%)`,
-                backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
-                tension: 0.4,
-                pointRadius: 3,
-                pointHoverRadius: 6
-            }));
-            try {
-                responseTimeChart = new Chart(ctx, {
-                    type: 'line',
-                    data: { datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: { intersect: false, mode: 'index' },
-                        scales: {
-                            x: {
-                                type: 'time',
-                                time: {
-                                    unit,
-                                    displayFormats: { minute: 'MMM dd HH:mm', hour: 'MMM dd HH:mm', day: 'MMM dd' }
-                                },
-                                title: { display: true, text: 'Time' }
-                            },
-                            y: {
-                                beginAtZero: true,
-                                title: { display: true, text: 'Response Time (ms)' }
-                            }
-                        },
-                        plugins: {
-                            legend: { position: 'top' },
-                            title: { display: true, text: selectedGroup ? `Response Time - ${selectedGroup}` : 'Response Time - All URLs' }
+        }
+    });
+}
+
+function createStatusCodeChartWithData(results) {
+    const ctx = document.getElementById('statusCodeChart').getContext('2d');
+    if (statusCodeChart) statusCodeChart.destroy();
+    if (!results || results.length === 0) {
+        ctx.fillText('No data available', 10, 50);
+        return;
+    }
+    const urlStatusCounts = {};
+    const statusCodesSet = new Set();
+    results.forEach(result => {
+        if (!result.name || !result.status) return;
+        if (!urlStatusCounts[result.name]) urlStatusCounts[result.name] = {};
+        urlStatusCounts[result.name][result.status] = (urlStatusCounts[result.name][result.status] || 0) + 1;
+        statusCodesSet.add(result.status);
+    });
+    const urls = Object.keys(urlStatusCounts);
+    const statusCodes = Array.from(statusCodesSet).sort((a, b) => a - b);
+    const datasets = statusCodes.map((status, idx) => ({
+        label: `${status} (${getStatusText(status)})`,
+        data: urls.map(url => urlStatusCounts[url][status] || 0),
+        backgroundColor: `hsl(${idx * 60}, 70%, 60%)`,
+        stack: 'status',
+    }));
+    statusCodeChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: urls, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Status Code Distribution'
+                },
+                legend: { display: true, position: 'top' },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y}`;
                         }
                     }
-                });
-            } catch (error) {
-                ctx.fillText('Chart creation failed: ' + error.message, 10, 50);
-            }
-            if (statusCodeChart) {
-                statusCodeChart.destroy();
-            }
-            
-            if (results.length === 0) {
-                console.log('No data available for status chart');
-            // Stacked bar chart: x = URL, y = count, stacks = status codes
-            const urlStatusCounts = {};
-            const statusCodesSet = new Set();
-            results.forEach(result => {
-                if (!result.name || !result.status) return;
-                if (!urlStatusCounts[result.name]) urlStatusCounts[result.name] = {};
-                urlStatusCounts[result.name][result.status] = (urlStatusCounts[result.name][result.status] || 0) + 1;
-                statusCodesSet.add(result.status);
-            });
-            const urls = Object.keys(urlStatusCounts);
-            const statusCodes = Array.from(statusCodesSet).sort((a, b) => a - b);
-            const datasets = statusCodes.map((status, idx) => ({
-                label: `${status} (${getStatusText(status)})`,
-                data: urls.map(url => urlStatusCounts[url][status] || 0),
-                backgroundColor: `hsl(${idx * 60}, 70%, 60%)`,
-                stack: 'status',
-            }));
-            try {
-                statusCodeChart = new Chart(ctx, {
-                    type: 'bar',
-                    data: { labels: urls, datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: selectedGroup ? `Status Code Distribution - ${selectedGroup}` : 'Status Code Distribution - All URLs'
-                            },
-                            legend: { display: true, position: 'top' },
-                            tooltip: {
-                                mode: 'index',
-                                intersect: false,
-                                callbacks: {
-                                    label: function(context) {
-                                        return `${context.dataset.label}: ${context.parsed.y}`;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            x: { stacked: true, title: { display: true, text: 'URL' } },
-                            y: { stacked: true, title: { display: true, text: 'Count' }, beginAtZero: true }
-                        }
-                    }
-                });
-            } catch (error) {
-                ctx.fillText('Chart creation failed: ' + error.message, 10, 50);
+                }
+            },
+            scales: {
+                x: { stacked: true, title: { display: true, text: 'URL' } },
+                y: { stacked: true, title: { display: true, text: 'Count' }, beginAtZero: true }
             }
         }
-                        }
-                    }
-                });
-                console.log('Status code chart created successfully');
-            } catch (error) {
-                console.error('Error creating status code chart:', error);
-                ctx.fillText('Chart creation failed: ' + error.message, 10, 50);
-            }
-        }
+    });
+}
 
-        async function refreshData() {
-            try {
-                updateTimestamp();
-                // Fetch and render group hierarchy for drilldown
-                await fetchGroupHierarchy();
-                renderDrilldown();
-                // Optionally update charts for current drilldown selection
-                // (You can enhance this to filter charts by group/countryCode)
-            } catch (error) {
-                console.error('Error refreshing data:', error);
-            }
-        }
+function changeTimeRange() {
+    const selector = document.getElementById('timeRangeSelector');
+    timeRangeHours = parseInt(selector.value);
+    const responseChartTitle = document.querySelector('.charts-container .chart-card:first-child h3');
+    const statusChartTitle = document.querySelector('.charts-container .chart-card:last-child h3');
+    const timeTextMap = {
+        1: '1 Hour',
+        6: '6 Hours', 
+        12: '12 Hours',
+        24: '24 Hours',
+        48: '48 Hours',
+        72: '3 Days',
+        168: '7 Days'
+    };
+    const timeText = timeTextMap[timeRangeHours] || `${timeRangeHours} Hours`;
+    responseChartTitle.textContent = `📊 Response Times by Group (Last ${timeText})`;
+    statusChartTitle.textContent = `🚦 Status Code Distribution (Last ${timeText})`;
+    refreshData();
+}
 
-        // Initial load
-        async function initialize() {
-            // Update mode indicator
-            const modeIndicator = document.getElementById('modeIndicator');
-            if (isStaticMode) {
-                modeIndicator.innerHTML = '🌐 Static Mode (GitHub Pages)';
-                modeIndicator.style.background = 'linear-gradient(45deg, #6f42c1, #e83e8c)';
-                modeIndicator.title = 'Running on GitHub Pages with data refreshed every 15 minutes';
-            } else {
-                modeIndicator.innerHTML = '⚡ Live Mode';
-                modeIndicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
-                modeIndicator.title = 'Connected to live API with real-time data';
-            }
+async function refreshData() {
+    try {
+        updateTimestamp();
+        await fetchGroupHierarchy();
+        renderDrilldown();
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+    }
+}
 
-            updateTimestamp();
-            await fetchGroupHierarchy();
-            renderDrilldown();
-            // Optionally, update charts for the initial view
-        }
+async function initialize() {
+    const modeIndicator = document.getElementById('modeIndicator');
+    if (isStaticMode) {
+        modeIndicator.innerHTML = '🌐 Static Mode (GitHub Pages)';
+        modeIndicator.style.background = 'linear-gradient(45deg, #6f42c1, #e83e8c)';
+        modeIndicator.title = 'Running on GitHub Pages with data refreshed every 15 minutes';
+    } else {
+        modeIndicator.innerHTML = '⚡ Live Mode';
+        modeIndicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+        modeIndicator.title = 'Connected to live API with real-time data';
+    }
+    updateTimestamp();
+    await fetchGroupHierarchy();
+    renderDrilldown();
+}
 
-        initialize();
-
-        // Auto-refresh every 30 seconds (more frequently in live mode)
-        const refreshInterval = isStaticMode ? 60000 : 30000; // 1 min for static, 30s for live
-        setInterval(refreshData, refreshInterval);
-    </script>
+initialize();
+const refreshInterval = isStaticMode ? 60000 : 30000;
+setInterval(refreshData, refreshInterval);
+</script>
 </body>
 </html>
