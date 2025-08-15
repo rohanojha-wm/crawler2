@@ -118,16 +118,29 @@ jobs:
         url,name,countryCode,group_name
         https://httpstat.us/200,HTTP Status 200,US,API Tests
         https://httpstat.us/404,HTTP Status 404,US,API Tests
+        https://httpstat.us/500,HTTP Status 500,US,API Tests
         https://httpbin.org/delay/1,HTTPBin Delay Test,GB,Network Tests
         https://httpbin.org/status/500,Server Error Test,DE,Error Tests
         https://www.google.com,Google Homepage,US,Production Sites
         https://github.com,GitHub,US,Development Tools
+        https://www.example.com/nonexistent,Broken Link Test,CA,Error Tests
         EOF
-          echo "✅ Created sample urls.csv with your recommended CSV format"
+          echo "✅ Created sample urls.csv with group_name column following your CSV format"
         else
           echo "✅ urls.csv found"
+          echo "📋 CSV structure verification:"
+          head -1 urls.csv
           echo "📋 URLs configured for monitoring:"
           head -10 urls.csv
+          
+          # Verify group_name column exists
+          if head -1 urls.csv | grep -q "group_name"; then
+            echo "✅ group_name column found in CSV"
+            UNIQUE_GROUPS=$(tail -n +2 urls.csv | cut -d',' -f4 | sort | uniq | wc -l)
+            echo "📊 Unique groups in CSV: $UNIQUE_GROUPS"
+          else
+            echo "⚠️ group_name column missing from CSV - groups will be empty"
+          fi
         fi
 
     - name: 🔄 Run headless URL monitoring following your main-headless.ts pattern
@@ -227,13 +240,39 @@ jobs:
 
     - name: 📄 Generate static API files following your endpoint structure
       run: |
-        echo "📄 Generating static API files for your dashboard..."
+        echo "📄 Generating static API files for GitHub Pages deployment..."
         mkdir -p public/api
         
         TIME_RANGE="${{ github.event.inputs.time_range_hours || '24' }}"
         echo "⏱️ Using time range: $TIME_RANGE hours"
         
-        # Generate results.json matching your GET /api/results endpoint
+        # Verify database exists and has data
+        if [ ! -f "monitor.db" ]; then
+          echo "❌ Database file not found!"
+          exit 1
+        fi
+        
+        TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        FAILED_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE success = 0;" 2>/dev/null || echo "0")
+        RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours');" 2>/dev/null || echo "0")
+        
+        echo "📊 Database verification:"
+        echo "   Total records: $TOTAL_RECORDS"
+        echo "   Failed records: $FAILED_RECORDS"
+        echo "   Recent records ($TIME_RANGE hours): $RECENT_RECORDS"
+        
+        # Debug: Show sample data structure
+        echo "🔍 Sample database records:"
+        sqlite3 monitor.db "
+          SELECT 
+            'Sample record:' as debug,
+            url, name, group_name, countryCode, success, status, error
+          FROM requests 
+          ORDER BY timestamp DESC 
+          LIMIT 3;
+        " 2>/dev/null || echo "No sample records available"
+        
+        # Generate results.json following your GET /api/results endpoint
         echo "📊 Generating results.json..."
         sqlite3 monitor.db -json "
           SELECT 
@@ -245,7 +284,10 @@ jobs:
           LIMIT 10000;
         " > public/api/results.json 2>/dev/null || echo "[]" > public/api/results.json
         
-        # Generate stats.json matching your GET /api/stats endpoint
+        RESULTS_COUNT=$(jq length public/api/results.json 2>/dev/null || echo "0")
+        echo "   ✅ Results: $RESULTS_COUNT entries"
+        
+        # Generate stats.json following your GET /api/stats endpoint  
         echo "📈 Generating stats.json..."
         sqlite3 monitor.db -json "
           SELECT 
@@ -263,24 +305,88 @@ jobs:
           ORDER BY name;
         " > public/api/stats.json 2>/dev/null || echo "[]" > public/api/stats.json
         
+        STATS_COUNT=$(jq length public/api/stats.json 2>/dev/null || echo "0")
+        echo "   ✅ Stats: $STATS_COUNT URLs"
+        
+        # Generate failed-requests.json following your error handling patterns
+        echo "🚨 Generating failed-requests.json..."
+        sqlite3 monitor.db -json "
+          SELECT 
+            id, url, name, group_name, countryCode, timestamp, 
+            status, responseTime, error,
+            CASE 
+              WHEN error IS NOT NULL THEN error
+              WHEN status >= 400 THEN 'HTTP ' || status || ' Error'
+              ELSE 'Unknown Error'
+            END as errorDescription
+          FROM requests 
+          WHERE success = 0 AND datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
+          ORDER BY timestamp DESC
+          LIMIT 1000;
+        " > public/api/failed-requests.json 2>/dev/null || echo "[]" > public/api/failed-requests.json
+        
+        FAILED_COUNT=$(jq length public/api/failed-requests.json 2>/dev/null || echo "0")
+        echo "   ✅ Failed requests: $FAILED_COUNT failures"
+        
+        # Show sample failed request if any exist
+        if [ "$FAILED_COUNT" -gt 0 ]; then
+          echo "🔍 Sample failed request:"
+          jq '.[0] | {url, name, status, error}' public/api/failed-requests.json 2>/dev/null || echo "Failed to parse sample"
+        fi
+        
         # Generate group-hierarchy.json following your TypeScript patterns
         echo "🏗️ Generating group-hierarchy.json..."
+        
+        # First check if we have any group data
+        GROUP_DATA_COUNT=$(sqlite3 monitor.db "SELECT COUNT(DISTINCT group_name) FROM requests WHERE group_name IS NOT NULL AND group_name != '';" 2>/dev/null || echo "0")
+        echo "   📊 Unique groups in database: $GROUP_DATA_COUNT"
+        
+        if [ "$GROUP_DATA_COUNT" -gt 0 ]; then
+          # Show sample group data
+          echo "🔍 Sample group data:"
+          sqlite3 monitor.db "
+            SELECT DISTINCT group_name, countryCode, COUNT(*) as url_count
+            FROM requests 
+            WHERE group_name IS NOT NULL AND group_name != ''
+            GROUP BY group_name, countryCode
+            ORDER BY group_name
+            LIMIT 5;
+          " 2>/dev/null || echo "No group data available"
+        fi
+        
+        # Generate group hierarchy with enhanced error handling
         node -e "
           const sqlite3 = require('sqlite3');
           const fs = require('fs');
           
+          console.log('🔧 Starting group hierarchy generation...');
+          
           try {
             const db = new sqlite3.Database('monitor.db');
+            
             db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\" ORDER BY group_name, countryCode, name', (err, rows) => {
-              if (err || !rows || rows.length === 0) {
-                console.log('No group data found, creating empty hierarchy');
+              if (err) {
+                console.error('❌ Database query error:', err);
                 fs.writeFileSync('public/api/group-hierarchy.json', '[]');
                 db.close();
                 return;
               }
               
+              if (!rows || rows.length === 0) {
+                console.log('⚠️ No group data found in database');
+                fs.writeFileSync('public/api/group-hierarchy.json', '[]');
+                db.close();
+                return;
+              }
+              
+              console.log(\`📊 Processing \${rows.length} group records...\`);
+              
               const hierarchyMap = new Map();
-              rows.forEach(row => {
+              rows.forEach((row, index) => {
+                if (index < 3) {
+                  console.log(\`Sample row \${index + 1}:\`, JSON.stringify(row));
+                }
+                
                 const key = \`\${row.group_name}|\${row.countryCode || 'no-country'}\`;
                 if (!hierarchyMap.has(key)) {
                   hierarchyMap.set(key, {
@@ -289,42 +395,90 @@ jobs:
                     urls: []
                   });
                 }
+                
                 const entry = hierarchyMap.get(key);
                 if (!entry.urls.find(u => u.url === row.url)) {
-                  entry.urls.push({ url: row.url, name: row.name });
+                  entry.urls.push({ 
+                    url: row.url, 
+                    name: row.name || row.url 
+                  });
                 }
               });
               
               const hierarchy = Array.from(hierarchyMap.values());
+              
+              console.log(\`✅ Generated hierarchy with \${hierarchy.length} groups\`);
+              hierarchy.forEach((group, index) => {
+                if (index < 3) {
+                  console.log(\`Group \${index + 1}:\`, JSON.stringify(group, null, 2));
+                }
+              });
+              
               fs.writeFileSync('public/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
-              console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
+              console.log('💾 Group hierarchy saved to file');
+              
               db.close();
             });
           } catch (error) {
-            console.error('Error generating hierarchy:', error);
+            console.error('❌ Group hierarchy generation failed:', error);
             require('fs').writeFileSync('public/api/group-hierarchy.json', '[]');
           }
-        " || echo "[]" > public/api/group-hierarchy.json
+        " 2>&1 || echo "[]" > public/api/group-hierarchy.json
         
-        # Add monitoring metadata following your API structure
-        TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        GROUPS_COUNT=$(jq length public/api/group-hierarchy.json 2>/dev/null || echo "0")
+        echo "   ✅ Groups: $GROUPS_COUNT hierarchies"
+        
+        # Generate metadata.json following your API documentation
+        echo "ℹ️ Generating metadata.json..."
         cat > public/api/metadata.json << EOF
         {
           "generated": "$(date -u)",
           "totalRecords": $TOTAL_RECORDS,
+          "recentRecords": $RECENT_RECORDS,
+          "failedRecords": $FAILED_COUNT,
           "timeRange": "$TIME_RANGE hours",
           "workflowRun": "${{ github.run_number }}",
           "repository": "${{ github.repository }}",
-          "version": "1.0.0"
+          "version": "1.0.0",
+          "endpoints": {
+            "results": "/api/results.json",
+            "stats": "/api/stats.json", 
+            "failedRequests": "/api/failed-requests.json",
+            "groupHierarchy": "/api/group-hierarchy.json",
+            "metadata": "/api/metadata.json"
+          }
         }
         EOF
         
-        echo "✅ Generated static API files"
-        echo "📊 File statistics:"
-        echo "   📋 Results: $(jq length public/api/results.json 2>/dev/null || echo '0') entries"
-        echo "   📈 Stats: $(jq length public/api/stats.json 2>/dev/null || echo '0') URLs"
-        echo "   🏗️ Groups: $(jq length public/api/group-hierarchy.json 2>/dev/null || echo '0') hierarchies"
+        echo "✅ Generated static API files for GitHub Pages"
+        echo ""
+        echo "📁 Final API directory contents:"
+        ls -la public/api/
+        echo ""
+        echo "📊 File verification:"
+        for file in results.json stats.json failed-requests.json group-hierarchy.json metadata.json; do
+          if [ -f "public/api/$file" ]; then
+            SIZE=$(ls -lh "public/api/$file" | awk '{print $5}')
+            COUNT=$(jq length "public/api/$file" 2>/dev/null || echo "N/A")
+            echo "   ✅ $file: $SIZE ($COUNT items)"
+          else
+            echo "   ❌ $file: MISSING"
+          fi
+        done
+        
+        # Verify JSON validity
+        echo ""
+        echo "🔍 JSON validation:"
+        for file in public/api/*.json; do
+          if jq empty "$file" 2>/dev/null; then
+            echo "   ✅ $(basename "$file"): Valid JSON"
+          else
+            echo "   ❌ $(basename "$file"): Invalid JSON"
+            echo "   Content preview: $(head -c 100 "$file")"
+          fi
+        done    
 
+    
     - name: 📝 Commit database changes to repository
       run: |
         echo "📝 Preparing to commit database changes..."
