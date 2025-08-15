@@ -1,4 +1,4 @@
-name: URL Monitor & Dashboard Deploy
+name: URL Monitor
 
 on:
   schedule:
@@ -28,10 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 📥 Checkout repository
+    - name: 📥 Checkout repository with full history
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
 
     - name: 🔧 Setup Node.js
       uses: actions/setup-node@v4
@@ -42,20 +43,34 @@ jobs:
     - name: 📦 Install dependencies
       run: npm ci
 
-    - name: 🏗️ Build TypeScript
+    - name: 🏗️ Build TypeScript following your project structure
       run: npm run build
 
-    - name: 📊 Download existing database (graceful failure)
-      continue-on-error: true
-      uses: actions/download-artifact@v4
-      with:
-        name: monitor-database-persistent
-        path: ./
+    - name: 📊 Check for existing database in repository
+      run: |
+        if [ -f "data/monitor.db" ]; then
+          echo "✅ Found existing database in repository"
+          cp data/monitor.db monitor.db
+          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "📊 Current records: $RECORD_COUNT"
+          
+          # Show database health
+          echo "🔍 Database health check:"
+          sqlite3 monitor.db "SELECT 
+            COUNT(*) as total_records,
+            COUNT(DISTINCT url) as unique_urls,
+            MIN(datetime(timestamp)) as oldest_record,
+            MAX(datetime(timestamp)) as newest_record
+          FROM requests;" 2>/dev/null || echo "Database health check failed"
+        else
+          echo "🆕 No existing database found, will create fresh one"
+          mkdir -p data
+        fi
 
-    - name: 🗄️ Initialize database following your schema
+    - name: 🗄️ Initialize database following your SQLite schema
       run: |
         if [ ! -f "monitor.db" ]; then
-          echo "🆕 Creating fresh database with your SQLite schema..."
+          echo "🔧 Creating fresh database with your project schema..."
           sqlite3 monitor.db "
             CREATE TABLE IF NOT EXISTS requests (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,17 +89,13 @@ jobs:
             CREATE INDEX IF NOT EXISTS idx_requests_group_name ON requests(group_name);
             CREATE INDEX IF NOT EXISTS idx_requests_country ON requests(countryCode);
           "
-          echo "✅ Fresh database initialized with your project schema"
-        else
-          echo "📊 Found existing database"
-          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "Current records: $RECORD_COUNT"
+          echo "✅ Fresh database initialized with your monitoring schema"
         fi
 
-    - name: 📋 Verify CSV configuration
+    - name: 📋 Verify CSV configuration following your guidelines
       run: |
         if [ ! -f "urls.csv" ]; then
-          echo "⚠️ urls.csv not found, creating sample following your CSV format"
+          echo "⚠️ urls.csv not found, creating sample following your format"
           cat > urls.csv << 'EOF'
         url,name,countryCode,group_name
         https://httpstat.us/200,HTTP Status 200,US,Test APIs
@@ -92,37 +103,40 @@ jobs:
         https://httpbin.org/delay/1,HTTPBin Delay Test,GB,Network Tests
         https://httpbin.org/status/500,Server Error Test,DE,Error Tests
         https://www.google.com,Google Homepage,US,Production Sites
+        https://github.com,GitHub,US,Development Tools
         EOF
-          echo "✅ Created sample urls.csv with your recommended format"
+          echo "✅ Created sample urls.csv with your recommended CSV format"
         else
           echo "✅ urls.csv found"
-          echo "URLs configured for monitoring:"
-          head -5 urls.csv
+          echo "📋 URLs configured for monitoring:"
+          head -10 urls.csv
         fi
 
-    - name: 🔄 Run headless URL monitoring
+    - name: 🔄 Run headless URL monitoring following your main-headless.ts pattern
       env:
         URLS_CSV_PATH: urls.csv
         MONITOR_TIMEOUT: 30000
         DATABASE_PATH: monitor.db
+        CHECK_INTERVAL: 60000
       run: |
-        echo "🔄 Starting URL monitoring cycle following your headless pattern..."
+        echo "🔄 Starting URL monitoring cycle using your headless application..."
         npm run headless
 
-    - name: 📈 Verify monitoring results
+    - name: 📈 Verify monitoring results following your database schema
       run: |
         if [ -f "monitor.db" ]; then
-          echo "✅ Monitoring completed successfully"
+          echo "✅ Monitoring cycle completed successfully"
           
-          # Statistics following your database schema
+          # Database statistics following your schema
           TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
           RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
           
           echo "📊 Database Statistics:"
-          echo "   Total records: $TOTAL_RECORDS"
-          echo "   Records this hour: $RECENT_RECORDS"
+          echo "   📋 Total records: $TOTAL_RECORDS"
+          echo "   🔄 Records this hour: $RECENT_RECORDS"
+          echo "   💾 Database size: $(ls -lh monitor.db | awk '{print $5}')"
           
-          # Show recent results following your API structure
+          # Show recent results following your API endpoint structure
           echo "🔍 Recent monitoring results:"
           sqlite3 monitor.db "
             SELECT 
@@ -130,14 +144,15 @@ jobs:
               status, 
               responseTime || 'ms' as response_time,
               CASE WHEN success = 1 THEN '✅' ELSE '❌' END as result,
-              group_name,
+              COALESCE(group_name, 'Ungrouped') as group_name,
               datetime(timestamp, 'localtime') as checked_at
             FROM requests 
             ORDER BY timestamp DESC 
             LIMIT 8;
-          " 2>/dev/null || echo "No results to display yet"
+          " 2>/dev/null | column -t || echo "No results to display yet"
           
-          # Success rate statistics
+          # Success rate statistics by group
+          echo ""
           echo "📈 Success rates by group:"
           sqlite3 monitor.db "
             SELECT 
@@ -149,35 +164,41 @@ jobs:
             WHERE datetime(timestamp) >= datetime('now', '-24 hours')
             GROUP BY group_name
             ORDER BY group_name;
-          " 2>/dev/null || echo "No group statistics available yet"
+          " 2>/dev/null | column -t || echo "No group statistics available yet"
           
         else
-          echo "❌ Database file not found after monitoring"
+          echo "❌ Database file not found after monitoring cycle"
           exit 1
         fi
 
-    - name: 💾 Upload database for persistence
-      uses: actions/upload-artifact@v4
-      with:
-        name: monitor-database-persistent
-        path: monitor.db
-        retention-days: 30
-        compression-level: 6
-        if-no-files-found: error
+    - name: 💾 Store database in repository for persistence
+      run: |
+        # Copy database to data directory for repository storage
+        mkdir -p data
+        cp monitor.db data/monitor.db
+        
+        # Create database backup with timestamp
+        BACKUP_NAME="monitor-backup-$(date -u +%Y%m%d-%H%M%S).db"
+        cp monitor.db "data/$BACKUP_NAME"
+        
+        echo "💾 Database stored in repository:"
+        echo "   📁 Primary: data/monitor.db"
+        echo "   🗄️ Backup: data/$BACKUP_NAME"
+        
+        # Keep only last 5 backups to prevent repository bloat
+        cd data && ls -t monitor-backup-*.db 2>/dev/null | tail -n +6 | xargs -r rm
+        echo "🧹 Old backups cleaned up"
 
-    - name: 📄 Generate static API files following your endpoints
+    - name: 📄 Generate static API files following your endpoint structure
       run: |
         echo "📄 Generating static API files for your dashboard..."
-        mkdir -p dashboard/api
-        
-        # Copy your public directory for dashboard
-        cp -r public/* dashboard/ 2>/dev/null || mkdir -p dashboard
+        mkdir -p public/api
         
         TIME_RANGE="${{ github.event.inputs.time_range_hours || '24' }}"
         echo "⏱️ Using time range: $TIME_RANGE hours"
         
         # Generate results.json matching your GET /api/results endpoint
-        echo "Generating results.json..."
+        echo "📊 Generating results.json..."
         sqlite3 monitor.db -json "
           SELECT 
             id, url, name, countryCode, group_name, timestamp, 
@@ -185,11 +206,11 @@ jobs:
           FROM requests 
           WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours') 
           ORDER BY timestamp DESC
-          LIMIT 5000;
-        " > dashboard/api/results.json 2>/dev/null || echo "[]" > dashboard/api/results.json
+          LIMIT 10000;
+        " > public/api/results.json 2>/dev/null || echo "[]" > public/api/results.json
         
         # Generate stats.json matching your GET /api/stats endpoint
-        echo "Generating stats.json..."
+        echo "📈 Generating stats.json..."
         sqlite3 monitor.db -json "
           SELECT 
             url, name, group_name, countryCode,
@@ -204,10 +225,10 @@ jobs:
           WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
           GROUP BY url, name, group_name, countryCode
           ORDER BY name;
-        " > dashboard/api/stats.json 2>/dev/null || echo "[]" > dashboard/api/stats.json
+        " > public/api/stats.json 2>/dev/null || echo "[]" > public/api/stats.json
         
-        # Generate group-hierarchy.json following your project structure
-        echo "Generating group-hierarchy.json..."
+        # Generate group-hierarchy.json following your TypeScript patterns
+        echo "🏗️ Generating group-hierarchy.json..."
         node -e "
           const sqlite3 = require('sqlite3');
           const fs = require('fs');
@@ -217,7 +238,7 @@ jobs:
             db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\" ORDER BY group_name, countryCode, name', (err, rows) => {
               if (err || !rows || rows.length === 0) {
                 console.log('No group data found, creating empty hierarchy');
-                fs.writeFileSync('dashboard/api/group-hierarchy.json', '[]');
+                fs.writeFileSync('public/api/group-hierarchy.json', '[]');
                 db.close();
                 return;
               }
@@ -239,35 +260,67 @@ jobs:
               });
               
               const hierarchy = Array.from(hierarchyMap.values());
-              fs.writeFileSync('dashboard/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
+              fs.writeFileSync('public/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
               console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
               db.close();
             });
           } catch (error) {
             console.error('Error generating hierarchy:', error);
-            require('fs').writeFileSync('dashboard/api/group-hierarchy.json', '[]');
+            require('fs').writeFileSync('public/api/group-hierarchy.json', '[]');
           }
-        " || echo "[]" > dashboard/api/group-hierarchy.json
+        " || echo "[]" > public/api/group-hierarchy.json
         
-        # Add metadata to dashboard
-        cat >> dashboard/index.html << EOF
-        <!-- Generated: $(date -u) -->
-        <!-- Records: $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;' 2>/dev/null || echo '0') -->
-        <!-- Time range: $TIME_RANGE hours -->
-        <!-- Monitor run: ${{ github.run_number }} -->
+        # Add monitoring metadata to API files
+        TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        cat > public/api/metadata.json << EOF
+        {
+          "generated": "$(date -u)",
+          "totalRecords": $TOTAL_RECORDS,
+          "timeRange": "$TIME_RANGE hours",
+          "workflowRun": "${{ github.run_number }}",
+          "repository": "${{ github.repository }}"
+        }
         EOF
         
         echo "✅ Generated static API files"
         echo "📊 File statistics:"
-        echo "   Results: $(jq length dashboard/api/results.json 2>/dev/null || echo '0') entries"
-        echo "   Stats: $(jq length dashboard/api/stats.json 2>/dev/null || echo '0') URLs"
-        echo "   Groups: $(jq length dashboard/api/group-hierarchy.json 2>/dev/null || echo '0') hierarchies"
+        echo "   📋 Results: $(jq length public/api/results.json 2>/dev/null || echo '0') entries"
+        echo "   📈 Stats: $(jq length public/api/stats.json 2>/dev/null || echo '0') URLs"
+        echo "   🏗️ Groups: $(jq length public/api/group-hierarchy.json 2>/dev/null || echo '0') hierarchies"
+
+    - name: 📝 Commit database changes to repository
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action - URL Monitor"
+        
+        # Add database files to repository
+        git add data/
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "📝 No database changes to commit"
+        else
+          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          git commit -m "Update monitoring database - $RECORD_COUNT records ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          
+          # Push with retry logic for potential conflicts
+          for i in {1..3}; do
+            if git push; then
+              echo "✅ Database changes pushed to repository"
+              break
+            else
+              echo "⚠️ Push failed, attempt $i/3"
+              git pull --rebase
+              sleep 5
+            fi
+          done
+        fi
 
     - name: 🌐 Deploy dashboard to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./dashboard
+        publish_dir: ./public
         enable_jekyll: false
         user_name: 'github-actions[bot]'
         user_email: 'github-actions[bot]@users.noreply.github.com'
@@ -281,15 +334,16 @@ jobs:
         TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
         RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
         
-        echo "   - Total database records: $TOTAL_RECORDS"
-        echo "   - Records added this hour: $RECENT_RECORDS"
-        echo "   - Database size: $(ls -lh monitor.db | awk '{print $5}' 2>/dev/null || echo 'Unknown')"
-        echo "   - API files deployed: $(ls dashboard/api/ 2>/dev/null | wc -l) files"
+        echo "   📋 Total database records: $TOTAL_RECORDS"
+        echo "   🔄 Records added this hour: $RECENT_RECORDS"
+        echo "   💾 Database size: $(ls -lh data/monitor.db | awk '{print $5}' 2>/dev/null || echo 'Unknown')"
+        echo "   📁 API files deployed: $(ls public/api/ 2>/dev/null | wc -l) files"
         echo ""
         echo "🌐 Dashboard URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
         echo "⏰ Next monitoring cycle: $(date -d '+15 minutes' -u '+%Y-%m-%d %H:%M UTC')"
         echo ""
         echo "🔗 API Endpoints (static):"
-        echo "   - Results: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/results.json"
-        echo "   - Stats: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/stats.json"
-        echo "   - Groups: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/group-hierarchy.json"
+        echo "   📊 Results: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/results.json"
+        echo "   📈 Stats: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/stats.json"
+        echo "   🏗️ Groups: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/group-hierarchy.json"
+        echo "   ℹ️ Metadata: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/metadata.json"
