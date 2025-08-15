@@ -1,144 +1,188 @@
-import { MonitoringConfig } from './types';
+import fs from 'fs/promises';
+import path from 'path';
 import { Database } from './database';
-import { UrlMonitor } from './monitor';
-import { WebServer } from './webserver';
+import { Monitor } from './monitor';
 import { ConfigLoader } from './config-loader';
+import { MonitorConfig } from './types';
 
-class Application {
-  private readonly database: Database;
-  private readonly monitor: UrlMonitor;
-  private readonly webServer?: WebServer;
-  private readonly isHeadless: boolean;
+class HeadlessApplication {
+    private database: Database;
+    private monitor: Monitor;
 
-  constructor(config: MonitoringConfig, headless: boolean = false) {
-    this.database = new Database();
-    this.monitor = new UrlMonitor(config, this.database);
-    this.isHeadless = headless;
-    
-    // Only create web server if not in headless mode
-    if (!headless) {
-      this.webServer = new WebServer(this.database);
-    }
-  }
-
-  async start(): Promise<void> {
-    console.log('🚀 Starting URL Monitor Application...');
-    
-    // Check if we're in single-pass mode
-    const singlePass = process.env.SINGLE_PASS === 'true';
-    
-    if (singlePass) {
-      // For single-pass mode, run once and exit
-      console.log('🔄 Single-pass mode: Checking all URLs once');
-      await this.monitor.runSingleCheck();
-      console.log('✅ Single-pass monitoring completed, exiting...');
-      process.exit(0);
-      return;
-    }
-    
-    // Start monitoring URLs (continuous mode)
-    this.monitor.startMonitoring();
-    
-    // Start web dashboard only if not headless
-    if (this.webServer && !this.isHeadless) {
-      this.webServer.start(3000);
-      console.log('📊 Dashboard: http://localhost:3000');
-    } else {
-      console.log('🤖 Running in headless mode (no web dashboard)');
-    }
-    
-    console.log('✅ Application started successfully!');
-    console.log('🔍 Monitoring URLs...');
-  }
-
-  stop(): void {
-    console.log('🛑 Stopping URL Monitor Application...');
-    
-    this.monitor.stopMonitoring();
-    
-    if (this.webServer) {
-      this.webServer.stop();
-    }
-    
-    this.database.close();
-    
-    console.log('✅ Application stopped successfully!');
-  }
-
-  async getStats(): Promise<any> {
-    return await this.monitor.getMonitoringStats();
-  }
-}
-
-async function main(): Promise<void> {
-  try {
-    // Check if running in CI/headless mode
-    const isCI = process.env.CI === 'true' || process.env.NODE_ENV === 'production';
-    const isHeadless = process.env.HEADLESS === 'true' || isCI;
-    
-    // Load configuration from CSV or JSON
-    const csvPath = process.env.URLS_CSV_PATH || './urls.csv';
-    const jsonPath = process.env.CONFIG_JSON_PATH || './config.json';
-    const checkInterval = parseInt(process.env.CHECK_INTERVAL || '60000'); // Default 60 seconds
-    
-    console.log('📋 Loading configuration...');
-    const config = await ConfigLoader.loadConfig(csvPath, jsonPath);
-    
-    // Override the default interval with environment variable
-    config.defaultInterval = checkInterval;
-    
-    console.log(`📋 Loaded configuration with ${config.urls.length} URLs:`);
-    console.log(`⏱️  Check interval: ${checkInterval/1000} seconds`);
-    config.urls.forEach(url => {
-      const countryInfo = url.countryCode ? ` (countryCode: ${url.countryCode})` : '';
-      console.log(`  - ${url.name}: ${url.url}${countryInfo}`);
-    });
-
-    // Create and start application
-    const app = new Application(config, isHeadless);
-
-    // Handle graceful shutdown
-    const shutdown = () => {
-      console.log('\n🛑 Shutting down gracefully...');
-      app.stop();
-      process.exit(0);
-    };
-
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-
-    // For CI environments, also handle timeout
-    if (isCI) {
-      const timeout = parseInt(process.env.MONITOR_TIMEOUT || '300') * 1000; // Default 5 minutes
-      setTimeout(() => {
-        console.log(`⏰ Timeout reached (${timeout/1000}s), shutting down...`);
-        shutdown();
-      }, timeout);
+    constructor() {
+        this.database = new Database();
+        this.monitor = new Monitor(this.database);
     }
 
-    // Start the application
-    await app.start();
-    
-    // In headless continuous mode, log stats periodically
-    if (isHeadless && process.env.SINGLE_PASS !== 'true') {
-      setInterval(async () => {
+    async run(): Promise<void> {
         try {
-          const stats = await app.getStats();
-          console.log('\n📊 Current Statistics:');
-          stats.forEach((stat: any) => {
-            console.log(`  ${stat.name}: ${stat.success_rate.toFixed(1)}% success (${stat.total_requests} requests, ${Math.round(stat.avg_response_time)}ms avg)`);
-          });
-        } catch (error) {
-          console.error('Error getting stats:', error);
+            console.log('🤖 Starting Headless URL Monitor...');
+
+            // Initialize database
+            await this.database.initialize();
+            console.log('✅ Database initialized');
+
+            // Load configuration
+            const config = await this.loadConfiguration();
+            console.log(`✅ Configuration loaded: ${config.urls.length} URLs`);
+
+            // Run single check cycle
+            await this.runSingleCycle(config);
+
+            // Generate static files for GitHub Pages
+            await this.generateStaticFiles();
+
+            // Cleanup old data
+            await this.cleanupOldData();
+
+            console.log('🎉 Headless run completed successfully!');
+
+        } catch (error: any) {
+            console.error('❌ Headless run failed:', error.message);
+            process.exit(1);
+        } finally {
+            await this.database.close();
         }
-      }, 60000); // Log stats every minute
     }
-    
-  } catch (error) {
-    console.error('❌ Failed to start application:', error);
-    process.exit(1);
-  }
+
+    private async loadConfiguration(): Promise<MonitorConfig> {
+        const csvPath = process.env.URLS_CSV_PATH || 'urls.csv';
+        const jsonPath = 'config.json';
+
+        try {
+            return await ConfigLoader.loadFromCSV(csvPath, {
+                defaultInterval: 60000, // Single check, interval doesn't matter
+                timeout: parseInt(process.env.MONITOR_TIMEOUT || '30000')
+            });
+        } catch (csvError) {
+            console.warn(`CSV loading failed: ${csvError}. Trying JSON...`);
+            
+            try {
+                return await ConfigLoader.loadFromJSON(jsonPath);
+            } catch (jsonError) {
+                throw new Error(`Failed to load configuration: ${csvError}, ${jsonError}`);
+            }
+        }
+    }
+
+    private async runSingleCycle(config: MonitorConfig): Promise<void> {
+        console.log('🔄 Running single monitoring cycle...');
+        
+        const promises = config.urls.map(async (urlConfig) => {
+            try {
+                console.log(`Checking: ${urlConfig.name} (${urlConfig.url})`);
+                
+                const startTime = Date.now();
+                const response = await fetch(urlConfig.url, {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'URL-Monitor/1.0',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    },
+                    signal: AbortSignal.timeout(config.timeout || 30000)
+                });
+
+                const responseTime = Date.now() - startTime;
+                const success = response.ok;
+
+                await this.database.insertResult({
+                    url: urlConfig.url,
+                    name: urlConfig.name,
+                    countryCode: urlConfig.countryCode,
+                    group_name: urlConfig.group_name,
+                    timestamp: new Date().toISOString(),
+                    status: response.status,
+                    responseTime,
+                    success,
+                    error: success ? undefined : `HTTP ${response.status}`
+                });
+
+                console.log(`✅ ${urlConfig.name}: ${response.status} (${responseTime}ms)`);
+
+            } catch (error: any) {
+                const responseTime = Date.now() - Date.now();
+                
+                await this.database.insertResult({
+                    url: urlConfig.url,
+                    name: urlConfig.name,
+                    countryCode: urlConfig.countryCode,
+                    group_name: urlConfig.group_name,
+                    timestamp: new Date().toISOString(),
+                    status: 0,
+                    responseTime,
+                    success: false,
+                    error: error.message || 'Request failed'
+                });
+
+                console.log(`❌ ${urlConfig.name}: ${error.message}`);
+            }
+        });
+
+        await Promise.all(promises);
+        console.log('✅ Monitoring cycle completed');
+    }
+
+    private async generateStaticFiles(): Promise<void> {
+        try {
+            console.log('📄 Generating static files for GitHub Pages...');
+
+            // Ensure public/api directory exists
+            const apiDir = path.join('public', 'api');
+            await fs.mkdir(apiDir, { recursive: true });
+
+            // Generate results.json
+            const results = await this.database.getResults('-7 days');
+            await fs.writeFile(
+                path.join(apiDir, 'results.json'),
+                JSON.stringify(results, null, 2)
+            );
+
+            // Generate group-hierarchy.json
+            const hierarchy = await this.database.getGroupHierarchy();
+            await fs.writeFile(
+                path.join(apiDir, 'group-hierarchy.json'),
+                JSON.stringify(hierarchy, null, 2)
+            );
+
+            // Generate stats.json
+            const stats = await this.database.getStats('-24 hours');
+            await fs.writeFile(
+                path.join(apiDir, 'stats.json'),
+                JSON.stringify(stats, null, 2)
+            );
+
+            console.log('✅ Static files generated');
+            console.log(`   - Results: ${results.length} entries`);
+            console.log(`   - Groups: ${hierarchy.length} groups`);
+            console.log(`   - Stats: ${stats.length} URLs`);
+
+        } catch (error: any) {
+            console.error('❌ Failed to generate static files:', error.message);
+            throw error;
+        }
+    }
+
+    private async cleanupOldData(): Promise<void> {
+        try {
+            const cleanupDays = parseInt(process.env.CLEANUP_DAYS || '30');
+            const deletedRows = await this.database.cleanup(cleanupDays);
+            
+            if (deletedRows > 0) {
+                console.log(`🧹 Cleaned up ${deletedRows} old records (older than ${cleanupDays} days)`);
+            }
+        } catch (error: any) {
+            console.warn('⚠️ Cleanup failed:', error.message);
+        }
+    }
 }
 
-// Start the application
-main();
+// Run if this file is executed directly
+if (require.main === module) {
+    const app = new HeadlessApplication();
+    app.run().catch((error) => {
+        console.error('Headless application failed:', error);
+        process.exit(1);
+    });
+}
+
+export { HeadlessApplication };

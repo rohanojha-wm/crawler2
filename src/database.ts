@@ -1,292 +1,234 @@
-
 import sqlite3 from 'sqlite3';
-import { RequestResult } from './types';
+import { open, Database as SqliteDatabase } from 'sqlite';
+import { RequestResult, GroupHierarchy, URLStats } from './types';
 
 export class Database {
-  // Returns: [{ group_name, countryCode, urls: [UrlConfig] }]
-  async getGroupHierarchy(): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        SELECT 
-          COALESCE(group_name, 'Ungrouped') as group_name,
-          COALESCE(countryCode, 'Unknown') as countryCode,
-          name, url
-        FROM requests
-        GROUP BY group_name, countryCode, name, url
-        ORDER BY group_name, countryCode, name
-      `;
-      this.db.all(query, [], (err: any, rows: any[]) => {
-        if (err) return reject(new Error(err));
-        // Build hierarchy: group -> countryCode -> urls[]
-        const result: any = {};
-        for (const row of rows) {
-          if (!result[row.group_name]) result[row.group_name] = {};
-          if (!result[row.group_name][row.countryCode]) result[row.group_name][row.countryCode] = [];
-          result[row.group_name][row.countryCode].push({ name: row.name, url: row.url });
-        }
-        // Convert to array
-        const hierarchy: any[] = [];
-        for (const group_name of Object.keys(result)) {
-          for (const countryCode of Object.keys(result[group_name])) {
-            hierarchy.push({
-              group_name,
-              countryCode,
-              urls: result[group_name][countryCode]
+    private db!: SqliteDatabase<sqlite3.Database, sqlite3.Statement>;
+
+    async initialize(dbPath: string = 'monitor.db'): Promise<void> {
+        try {
+            this.db = await open({
+                filename: dbPath,
+                driver: sqlite3.Database
             });
-          }
+
+            // Create main requests table following the schema: id, url, name, timestamp, status, responseTime, success, error
+            await this.db.exec(`
+                CREATE TABLE IF NOT EXISTS requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    countryCode TEXT,
+                    group_name TEXT,
+                    timestamp TEXT NOT NULL,
+                    status INTEGER NOT NULL,
+                    responseTime INTEGER NOT NULL,
+                    success BOOLEAN NOT NULL,
+                    error TEXT
+                )
+            `);
+
+            // Add new columns for group functionality (graceful migration)
+            try {
+                await this.db.exec('ALTER TABLE requests ADD COLUMN countryCode TEXT');
+            } catch (error) {
+                // Column already exists
+            }
+            
+            try {
+                await this.db.exec('ALTER TABLE requests ADD COLUMN group_name TEXT');
+            } catch (error) {
+                // Column already exists
+            }
+
+            // Create indexes for better query performance
+            await this.db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
+                CREATE INDEX IF NOT EXISTS idx_requests_group_name ON requests(group_name);
+                CREATE INDEX IF NOT EXISTS idx_requests_country ON requests(countryCode);
+            `);
+
+            console.log(`Database initialized successfully: ${dbPath}`);
+        } catch (error: any) {
+            console.error('Database initialization failed:', error.message);
+            throw error;
         }
-        resolve(hierarchy);
-      });
-    });
-  }
-  private readonly db: sqlite3.Database;
+    }
 
-  constructor(dbPath: string = './monitoring.db') {
-    this.db = new sqlite3.Database(dbPath);
-    this.initializeDatabase();
-  }
-
-  private initializeDatabase(): void {
-    const createTable = `
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT NOT NULL,
-            name TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            status INTEGER NOT NULL,
-            responseTime INTEGER NOT NULL,
-            success BOOLEAN NOT NULL,
-            error TEXT,
-            group_name TEXT
-        )
-    `;
-
-    this.db.run(createTable, (err) => {
-      if (err) {
-        console.error('Error creating table:', err);
-      } else {
-        console.log('Database initialized successfully');
-        
-        // Try to add group_name column if it doesn't exist (for existing databases)
-        this.db.run(`ALTER TABLE requests ADD COLUMN group_name TEXT`, (alterErr) => {
-          // Ignore error if column already exists
-          if (alterErr && !alterErr.message.includes('duplicate column')) {
-            console.log('Note: Could not add group_name column (may already exist)');
-          }
-        });
-      }
-    });
-  }
-
-  async saveResult(result: RequestResult): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        INSERT INTO requests (url, name, group_name, timestamp, status, responseTime, success, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      this.db.run(
-        query,
-        [result.url, result.name, result.group, result.timestamp, result.status, result.responseTime, result.success, result.error],
-        function(err) {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
+    async insertResult(result: RequestResult): Promise<void> {
+        try {
+            await this.db.run(
+                `INSERT INTO requests (url, name, countryCode, group_name, timestamp, status, responseTime, success, error)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    result.url,
+                    result.name,
+                    result.countryCode || null,
+                    result.group_name || null,
+                    result.timestamp,
+                    result.status,
+                    result.responseTime,
+                    result.success ? 1 : 0,
+                    result.error || null
+                ]
+            );
+        } catch (error: any) {
+            console.error('Error inserting monitoring result:', error.message);
+            throw error;
         }
-      );
-    });
-  }
+    }
 
+    async getResults(timeRange: string = '-24 hours', groupName?: string): Promise<RequestResult[]> {
+        try {
+            let query = `
+                SELECT id, url, name, countryCode, group_name, timestamp, status, responseTime, success, error
+                FROM requests 
+                WHERE datetime(timestamp) >= datetime('now', ?)
+            `;
+            const params: any[] = [timeRange];
 
-  async getResults(timeRange?: string, urlName?: string, groupName?: string): Promise<RequestResult[]> {
-    return new Promise((resolve, reject) => {
-      let query = 'SELECT * FROM requests';
-      const params: any[] = [];
+            if (groupName) {
+                query += ' AND group_name = ?';
+                params.push(groupName);
+            }
 
-      const conditions: string[] = [];
+            query += ' ORDER BY timestamp DESC';
 
-      if (timeRange) {
-        conditions.push('timestamp >= datetime("now", ?)');
-        params.push(timeRange);
-      }
-
-      if (urlName) {
-        conditions.push('name = ?');
-        params.push(urlName);
-      }
-
-      if (groupName) {
-        conditions.push('group_name = ?');
-        params.push(groupName);
-      }
-
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
-      }
-
-      query += ' ORDER BY timestamp DESC';
-
-      this.db.all(query, params, (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as RequestResult[]);
+            const rows = await this.db.all(query, params);
+            return rows.map(row => ({
+                ...row,
+                success: Boolean(row.success)
+            }));
+        } catch (error: any) {
+            console.error('Error retrieving monitoring results:', error.message);
+            throw error;
         }
-      });
-    });
-  }
+    }
 
-  async getStats(): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        SELECT 
-          name,
-          group_name,
-          COUNT(*) as total_requests,
-          AVG(responseTime) as avg_response_time,
-          AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100 as success_rate,
-          MAX(timestamp) as last_check
-        FROM requests 
-        GROUP BY name, group_name
-      `;
+    async getGroupHierarchy(): Promise<GroupHierarchy[]> {
+        try {
+            console.log('Building group hierarchy from database...');
+            
+            // Get distinct group/country/url combinations for dashboard drilldown
+            const rows = await this.db.all(`
+                SELECT DISTINCT group_name, countryCode, url, name
+                FROM requests
+                WHERE group_name IS NOT NULL 
+                  AND group_name != ''
+                  AND url IS NOT NULL
+                  AND name IS NOT NULL
+                ORDER BY group_name, countryCode, name
+            `);
 
-      this.db.all(query, [], (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
+            console.log(`Found ${rows.length} group/country/url combinations in database`);
+
+            if (rows.length === 0) {
+                console.warn('No group hierarchy data found. Ensure URLs have group_name values.');
+                
+                // Debug: Check what data we have
+                const totalRows = await this.db.get('SELECT COUNT(*) as count FROM requests');
+                console.log(`Total requests in database: ${totalRows?.count || 0}`);
+                
+                const sampleRows = await this.db.all('SELECT url, name, group_name, countryCode FROM requests LIMIT 5');
+                console.log('Sample data:', sampleRows);
+                
+                return [];
+            }
+
+            // Build hierarchy map for dashboard drilldown functionality
+            const hierarchyMap = new Map<string, GroupHierarchy>();
+            
+            rows.forEach(row => {
+                const key = `${row.group_name}|${row.countryCode || 'no-country'}`;
+                
+                if (!hierarchyMap.has(key)) {
+                    hierarchyMap.set(key, {
+                        group_name: row.group_name,
+                        countryCode: row.countryCode || undefined,
+                        urls: []
+                    });
+                }
+                
+                const entry = hierarchyMap.get(key)!;
+                
+                // Avoid duplicate URLs in the same group/country
+                if (!entry.urls.find(u => u.url === row.url)) {
+                    entry.urls.push({
+                        url: row.url,
+                        name: row.name
+                    });
+                }
+            });
+
+            const result = Array.from(hierarchyMap.values());
+            const totalUrls = result.reduce((sum, g) => sum + g.urls.length, 0);
+            
+            console.log(`Built group hierarchy: ${result.length} groups containing ${totalUrls} URLs total`);
+            
+            return result;
+        } catch (error: any) {
+            console.error('Error building group hierarchy:', error.message);
+            throw error;
         }
-      });
-    });
-  }
+    }
 
-  async getGroupStats(): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        SELECT 
-          COALESCE(group_name, 'Ungrouped') as group_name,
-          COUNT(DISTINCT name) as url_count,
-          COUNT(*) as total_requests,
-          AVG(responseTime) as avg_response_time,
-          AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100 as success_rate,
-          MAX(timestamp) as last_check
-        FROM requests 
-        GROUP BY group_name
-      `;
+    async getStats(timeRange: string = '-24 hours'): Promise<URLStats[]> {
+        try {
+            const rows = await this.db.all(`
+                SELECT 
+                    url,
+                    name,
+                    group_name,
+                    countryCode,
+                    COUNT(*) as totalRequests,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
+                    AVG(responseTime) as averageResponseTime,
+                    MAX(timestamp) as lastChecked,
+                    (SELECT status FROM requests r2 WHERE r2.url = requests.url ORDER BY timestamp DESC LIMIT 1) as lastStatus
+                FROM requests 
+                WHERE datetime(timestamp) >= datetime('now', ?)
+                GROUP BY url, name, group_name, countryCode
+                ORDER BY name
+            `, [timeRange]);
 
-      this.db.all(query, [], (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
+            return rows.map(row => ({
+                url: row.url,
+                name: row.name,
+                group_name: row.group_name,
+                countryCode: row.countryCode,
+                totalRequests: row.totalRequests,
+                successfulRequests: row.successfulRequests,
+                failedRequests: row.failedRequests,
+                successRate: row.totalRequests > 0 ? (row.successfulRequests / row.totalRequests) * 100 : 0,
+                averageResponseTime: Math.round(row.averageResponseTime || 0),
+                lastChecked: row.lastChecked,
+                lastStatus: row.lastStatus
+            }));
+        } catch (error: any) {
+            console.error('Error calculating URL statistics:', error.message);
+            throw error;
         }
-      });
-    });
-  }
+    }
 
-  async getStatusCodeStats(timeRange?: string, groupName?: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let query = `
-        SELECT 
-          COALESCE(group_name, 'Ungrouped') as group_name,
-          name,
-          status,
-          COUNT(*) as count,
-          datetime(timestamp) as timestamp
-        FROM requests
-      `;
-
-      const params: any[] = [];
-      const conditions: string[] = [];
-      
-      if (timeRange) {
-        conditions.push('timestamp >= datetime("now", ?)');
-        params.push(timeRange);
-      }
-
-      if (groupName) {
-        conditions.push('group_name = ?');
-        params.push(groupName);
-      }
-
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
-      }
-
-      query += ' GROUP BY group_name, name, status ORDER BY timestamp DESC';
-
-      this.db.all(query, params, (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
+    async cleanup(olderThanDays: number = 30): Promise<number> {
+        try {
+            const result = await this.db.run(
+                'DELETE FROM requests WHERE datetime(timestamp) < datetime("now", "-" || ? || " days")',
+                [olderThanDays]
+            );
+            return result.changes || 0;
+        } catch (error: any) {
+            console.error('Error during database cleanup:', error.message);
+            throw error;
         }
-      });
-    });
-  }
+    }
 
-  async getUrlsByGroup(groupName: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        SELECT 
-          name,
-          url,
-          COUNT(*) as total_requests,
-          AVG(responseTime) as avg_response_time,
-          AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100 as success_rate,
-          MAX(timestamp) as last_check
-        FROM requests 
-        WHERE group_name = ?
-        GROUP BY name, url
-      `;
-
-      this.db.all(query, [groupName], (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
+    async close(): Promise<void> {
+        if (this.db) {
+            await this.db.close();
+            console.log('Database connection closed');
         }
-      });
-    });
-  }
-
-  async getFailedRequests(timeRange?: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let query = `
-        SELECT 
-          id,
-          url,
-          name,
-          COALESCE(group_name, 'Ungrouped') as group_name,
-          timestamp,
-          status,
-          responseTime,
-          error
-        FROM requests 
-        WHERE success = 0
-      `;
-
-      const params: any[] = [];
-      if (timeRange) {
-        query += ' AND timestamp >= datetime("now", ?)';
-        params.push(timeRange);
-      }
-
-      query += ' ORDER BY timestamp DESC';
-
-      this.db.all(query, params, (err, rows: any[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
-  }
-
-  close(): void {
-    this.db.close();
-  }
+    }
 }

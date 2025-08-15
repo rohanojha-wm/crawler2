@@ -1,7 +1,14 @@
 url,name,countryCode,group
-https://www.max.com,US Homepage Max,US,Max Streaming
-https://www.discoveryplus.com,D+ Homepage,US,Discovery Plus
-https://www.max.com/shows,US Show,US,Max Streaming
-https://www.max.com/movies,US Movie,US,Max Streaming
-https://www.discoveryplus.com/shows,D+ Show,US,Discovery Plus
-https://www.discoveryplus.com/movies,D+ Movie,US,Discovery Plus
+https://www.max.com,Homepage,US,Max
+https://www.max.com/shows,Show,US,Max
+https://www.max.com/movies,Movie,US,Max
+https://www.max.com/rohan,Failure,US,Max
+https://www.discoveryplus.com,Homepage,US,D+
+https://www.discoveryplus.com/shows,Show,US,D+
+https://www.discoveryplus.com/movies,Movie,US,D+
+https://www.max.com/mx/es,Homepage,MX,Max
+https://www.max.com/mx/es/shows,Show,MX,Max
+https://www.max.com/movies,Movie,MX,Max
+https://www.discoveryplus.com/ca/en,Homepage,CA,D+
+https://www.discoveryplus.com/ca/en/shows,Show,CA,D+
+https://www.discoveryplus.com/ca/en/movies,Movie,CA,D+

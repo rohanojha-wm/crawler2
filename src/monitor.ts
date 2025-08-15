@@ -1,212 +1,167 @@
-import axios, { AxiosResponse } from 'axios';
-import { UrlConfig, RequestResult, MonitoringConfig } from './types';
+import { URLConfig, RequestResult } from './types';
 import { Database } from './database';
-import { SlackNotifier } from './slack-notifier';
 
-export class UrlMonitor {
-  private readonly config: MonitoringConfig;
-  private readonly database: Database;
-  private readonly slackNotifier: SlackNotifier;
-  private readonly intervals: Map<string, NodeJS.Timeout> = new Map();
-  private readonly failureTracker: Map<string, number> = new Map(); // Track consecutive failures per URL
-  private readonly notifiedUrls: Set<string> = new Set(); // Track which URLs have been notified
+export class Monitor {
+    private database: Database;
+    private timeout: number;
+    private isRunning: boolean = false;
+    private intervals: Map<string, NodeJS.Timeout> = new Map();
 
-  constructor(config: MonitoringConfig, database: Database) {
-    this.config = config;
-    this.database = database;
-    this.slackNotifier = new SlackNotifier();
-  }
-
-  async checkUrl(urlConfig: UrlConfig): Promise<RequestResult> {
-    const startTime = Date.now();
-    let result: RequestResult;
-
-    try {
-      // Prepare request headers and cookies
-      const headers: any = {
-        'User-Agent': 'URL-Monitor/1.0'
-      };
-
-      // Add country code as cookie if provided
-      if (urlConfig.countryCode) {
-        headers['Cookie'] = `countryCode=${urlConfig.countryCode}`;
-      }
-
-      const response: AxiosResponse = await axios.get(urlConfig.url, {
-        timeout: this.config.timeout,
-        validateStatus: () => true, // Don't throw on 4xx/5xx status codes
-        headers
-      });
-
-      const responseTime = Date.now() - startTime;
-      
-      result = {
-        url: urlConfig.url,
-        name: urlConfig.name,
-        group: urlConfig.group,
-        timestamp: new Date().toISOString(),
-        status: response.status,
-        responseTime,
-        success: response.status >= 200 && response.status < 400
-      };
-
-    } catch (error: any) {
-      const responseTime = Date.now() - startTime;
-      
-      result = {
-        url: urlConfig.url,
-        name: urlConfig.name,
-        group: urlConfig.group,
-        timestamp: new Date().toISOString(),
-        status: 0,
-        responseTime,
-        success: false,
-        error: error.message
-      };
+    constructor(database: Database, timeout: number = 30000) {
+        this.database = database;
+        this.timeout = timeout;
     }
 
-    // Save to database
-    try {
-      await this.database.saveResult(result);
-    } catch (error) {
-      console.error('Error saving result to database:', error);
-    }
-
-    // Track consecutive failures and send Slack notifications
-    await this.handleFailureTracking(result, urlConfig);
-
-    return result;
-  }
-
-  startMonitoring(): void {
-    console.log('Starting URL monitoring...');
-    
-    // Check if we're in single-pass mode
-    const singlePass = process.env.SINGLE_PASS === 'true';
-    
-    if (singlePass) {
-      console.log('🔄 Single-pass mode: Checking all URLs once');
-      this.runSingleCheck();
-      return;
-    }
-    
-    // Original periodic monitoring mode
-    console.log('🔁 Continuous monitoring mode');
-    
-    // Initial check for all URLs
-    this.config.urls.forEach(urlConfig => {
-      this.checkUrl(urlConfig).then(result => {
-        console.log(`Initial check for ${result.name}: ${result.success ? 'SUCCESS' : 'FAILED'} (${result.responseTime}ms)`);
-      });
-    });
-
-    // Set up periodic checking for all URLs using the same interval
-    const intervalId = setInterval(async () => {
-      console.log(`\n📊 Running monitoring cycle at ${new Date().toISOString()}`);
-      
-      // Check all URLs in parallel
-      const promises = this.config.urls.map(async (urlConfig) => {
-        try {
-          const result = await this.checkUrl(urlConfig);
-          console.log(`${result.name}: ${result.success ? '✅' : '❌'} ${result.status} (${result.responseTime}ms)`);
-          return result;
-        } catch (error) {
-          console.error(`Error monitoring ${urlConfig.name}:`, error);
-          return null;
+    async start(urls: URLConfig[]): Promise<void> {
+        if (this.isRunning) {
+            throw new Error('Monitor is already running');
         }
-      });
 
-      await Promise.all(promises);
-    }, this.config.defaultInterval);
+        this.isRunning = true;
+        console.log(`Starting monitor for ${urls.length} URLs`);
 
-    this.intervals.set('main', intervalId);
-  }
-
-  async runSingleCheck(): Promise<void> {
-    console.log(`\n📊 Running single monitoring check at ${new Date().toISOString()}`);
-    
-    try {
-      // Check all URLs in parallel
-      const promises = this.config.urls.map(async (urlConfig) => {
-        try {
-          const result = await this.checkUrl(urlConfig);
-          console.log(`${result.name}: ${result.success ? '✅' : '❌'} ${result.status} (${result.responseTime}ms)`);
-          return result;
-        } catch (error) {
-          console.error(`Error monitoring ${urlConfig.name}:`, error);
-          return null;
+        // Start monitoring each URL with its individual interval
+        for (const url of urls) {
+            this.scheduleURL(url);
         }
-      });
-
-      const results = await Promise.all(promises);
-      const successCount = results.filter(r => r?.success).length;
-      const totalCount = results.filter(r => r !== null).length;
-      
-      console.log(`\n📈 Single check completed: ${successCount}/${totalCount} URLs successful`);
-      console.log('✅ Single-pass monitoring finished');
-      
-    } catch (error) {
-      console.error('❌ Error during single check:', error);
     }
-  }
 
-  stopMonitoring(): void {
-    console.log('Stopping URL monitoring...');
-    
-    this.intervals.forEach((intervalId, name) => {
-      clearInterval(intervalId);
-      console.log(`Stopped monitoring ${name}`);
-    });
-    
-    this.intervals.clear();
-  }
-
-  async getMonitoringStats(): Promise<any> {
-    return await this.database.getStats();
-  }
-
-  async getRecentResults(timeRange: string = '-1 hour'): Promise<RequestResult[]> {
-    return await this.database.getResults(timeRange);
-  }
-
-  private async handleFailureTracking(result: RequestResult, urlConfig: UrlConfig): Promise<void> {
-    const urlKey = result.url;
-    
-    if (result.success) {
-      // URL is back online - check if we need to send recovery notification
-      if (this.notifiedUrls.has(urlKey)) {
-        await this.slackNotifier.sendRecoveryAlert({
-          url: result.url,
-          name: result.name,
-          consecutiveFailures: 0,
-          groupName: result.group
-        });
-        this.notifiedUrls.delete(urlKey);
-      }
-      
-      // Reset failure count on success
-      this.failureTracker.delete(urlKey);
-    } else {
-      // URL failed - increment failure count
-      const currentFailures = this.failureTracker.get(urlKey) || 0;
-      const newFailureCount = currentFailures + 1;
-      this.failureTracker.set(urlKey, newFailureCount);
-      
-      // Send Slack notification if we hit the threshold (3+ consecutive failures)
-      // and haven't already notified for this URL
-      if (newFailureCount >= 3 && !this.notifiedUrls.has(urlKey)) {
-        await this.slackNotifier.sendFailureAlert({
-          url: result.url,
-          name: result.name,
-          consecutiveFailures: newFailureCount,
-          lastError: result.error,
-          groupName: result.group
-        });
-        this.notifiedUrls.add(urlKey);
-      }
-      
-      // Log failure count for debugging
-      console.log(`❌ ${result.name}: ${newFailureCount} consecutive failure(s)`);
+    private scheduleURL(config: URLConfig): void {
+        const interval = config.interval || 60000; // Default 1 minute
+        
+        // Initial check
+        this.checkURL(config);
+        
+        // Schedule periodic checks
+        const intervalId = setInterval(() => {
+            this.checkURL(config);
+        }, interval);
+        
+        this.intervals.set(config.url, intervalId);
+        console.log(`Scheduled ${config.name} (${config.url}) every ${interval}ms`);
     }
-  }
+
+    private async checkURL(config: URLConfig): Promise<void> {
+        const startTime = Date.now();
+        let result: RequestResult;
+
+        try {
+            const headers: Record<string, string> = {
+                'User-Agent': 'URL-Monitor/1.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            };
+
+            // Add country-specific headers if countryCode is provided
+            if (config.countryCode) {
+                headers['Accept-Language'] = this.getAcceptLanguage(config.countryCode);
+                // Add country-specific cookies if needed
+                const countryCookie = this.getCountryCookie(config.countryCode);
+                if (countryCookie) {
+                    headers['Cookie'] = countryCookie;
+                }
+            }
+
+            const response = await fetch(config.url, {
+                method: 'GET',
+                headers,
+                signal: AbortSignal.timeout(this.timeout)
+            });
+
+            const responseTime = Date.now() - startTime;
+            const success = response.ok;
+
+            result = {
+                url: config.url,
+                name: config.name,
+                countryCode: config.countryCode,
+                group_name: config.group_name,
+                timestamp: new Date().toISOString(),
+                status: response.status,
+                responseTime,
+                success,
+                error: success ? undefined : `HTTP ${response.status}`
+            };
+
+            console.log(`✓ ${config.name}: ${response.status} (${responseTime}ms)`);
+
+        } catch (error: any) {
+            const responseTime = Date.now() - startTime;
+            
+            result = {
+                url: config.url,
+                name: config.name,
+                countryCode: config.countryCode,
+                group_name: config.group_name,
+                timestamp: new Date().toISOString(),
+                status: 0,
+                responseTime,
+                success: false,
+                error: error.message || 'Request failed'
+            };
+
+            console.log(`✗ ${config.name}: ${error.message} (${responseTime}ms)`);
+        }
+
+        await this.database.insertResult(result);
+    }
+
+    private getAcceptLanguage(countryCode: string): string {
+        const languageMap: Record<string, string> = {
+            'US': 'en-US,en;q=0.9',
+            'GB': 'en-GB,en;q=0.9',
+            'CA': 'en-CA,en;q=0.9,fr-CA;q=0.8',
+            'AU': 'en-AU,en;q=0.9',
+            'DE': 'de-DE,de;q=0.9,en;q=0.8',
+            'FR': 'fr-FR,fr;q=0.9,en;q=0.8',
+            'ES': 'es-ES,es;q=0.9,en;q=0.8',
+            'IT': 'it-IT,it;q=0.9,en;q=0.8',
+            'BR': 'pt-BR,pt;q=0.9,en;q=0.8',
+            'JP': 'ja-JP,ja;q=0.9,en;q=0.8',
+            'KR': 'ko-KR,ko;q=0.9,en;q=0.8'
+        };
+        return languageMap[countryCode] || 'en-US,en;q=0.9';
+    }
+
+    private getCountryCookie(countryCode: string): string | null {
+        const cookieMap: Record<string, string> = {
+            'US': 'country=US; region=NA',
+            'GB': 'country=GB; region=EU',
+            'CA': 'country=CA; region=NA',
+            'AU': 'country=AU; region=APAC',
+            'DE': 'country=DE; region=EU',
+            'FR': 'country=FR; region=EU'
+        };
+        return cookieMap[countryCode] || null;
+    }
+
+    async stop(): Promise<void> {
+        if (!this.isRunning) {
+            return;
+        }
+
+        console.log('Stopping monitor...');
+        this.isRunning = false;
+
+        // Clear all intervals
+        for (const [url, intervalId] of this.intervals.entries()) {
+            clearInterval(intervalId);
+            console.log(`Stopped monitoring: ${url}`);
+        }
+        
+        this.intervals.clear();
+        console.log('Monitor stopped');
+    }
+
+    isMonitorRunning(): boolean {
+        return this.isRunning;
+    }
+
+    getMonitoredURLs(): string[] {
+        return Array.from(this.intervals.keys());
+    }
 }
