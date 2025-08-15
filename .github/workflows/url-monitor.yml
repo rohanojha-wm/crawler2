@@ -1,255 +1,166 @@
 name: URL Monitor
 
 on:
-  # Run on schedule (every 30 minutes)
   schedule:
-    - cron: '*/30 * * * *'
-  
-  # Allow manual trigger
+    - cron: '*/15 * * * *'  # Every 15 minutes
   workflow_dispatch:
     inputs:
-      duration:
-        description: 'How long to run monitoring (in minutes)'
+      force_run:
+        description: 'Force monitoring run'
         required: false
-        default: '2'
-        type: string
-      interval:
-        description: 'Check interval (in seconds)'
-        required: false
-        default: '60'
-        type: string
-  
-  # Run on push to main branch (for testing)
-  push:
-    branches: [ main ]
-  
-  # Run on pull request (for testing)
-  pull_request:
-    branches: [ main ]
-
-env:
-  NODE_VERSION: '18'
-
-permissions:
-  contents: read
-  actions: write
+        default: 'false'
 
 jobs:
-  url-monitor:
+  monitor:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
-    
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ env.NODE_VERSION }}
+        node-version: '18'
         cache: 'npm'
-    
+
     - name: Install dependencies
       run: npm ci
-    
+
     - name: Build TypeScript
       run: npm run build
 
-    - name: 📊 Download previous monitoring database
-      shell: bash
+    - name: Download existing database
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: monitoring-database
+        path: .
+
+    - name: Check database status
       run: |
-        echo "🔍 Finding latest monitoring database artifact..."
-        
-        # Get the latest successful monitoring workflow run (excluding current run)
-        LATEST_RUN=$(gh api repos/${{ github.repository }}/actions/workflows/url-monitor.yml/runs \
-          --jq '.workflow_runs[] | select(.conclusion == "success" and .id != ${{ github.run_id }}) | .id' | head -1) || true
-        
-        if [ -n "$LATEST_RUN" ]; then
-          echo "📥 Found previous run: $LATEST_RUN"
-          echo "🔄 Attempting to download database from run $LATEST_RUN..."
-          
-          # Try to download the artifact
-          if gh run download $LATEST_RUN --name monitoring-database --dir ./; then
-            echo "✅ Successfully downloaded previous database"
-          else
-            echo "⚠️ Could not download previous database, will start fresh"
-          fi
+        if [ -f "monitor.db" ]; then
+          echo "📊 Existing database found"
+          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;" || echo "Database needs initialization"
         else
-          echo "📝 No previous successful monitoring runs found, starting fresh"
+          echo "🆕 No existing database, will create new one"
         fi
+
+    - name: Run headless monitoring
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: true
+        URLS_CSV_PATH: urls.csv
+        MONITOR_TIMEOUT: 30000
+        CHECK_INTERVAL: 60000
+      run: npm run headless
 
-    - name: 🔍 Check database status
+    - name: Verify monitoring results
       run: |
-        if [ -f monitoring.db ]; then
-          echo "📋 Previous database found"
-          # Install sqlite3 for database operations
-          sudo apt-get update && sudo apt-get install -y sqlite3
-          RECORD_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "📊 Existing records: $RECORD_COUNT"
-          if [ "$RECORD_COUNT" -gt 0 ]; then
-            echo "🕐 Date range:"
-            sqlite3 monitoring.db "SELECT 'Oldest: ' || MIN(datetime(timestamp)), 'Newest: ' || MAX(datetime(timestamp)) FROM requests;" 2>/dev/null || echo "Could not read timestamps"
-          fi
+        if [ -f "monitor.db" ]; then
+          echo "📈 Monitoring completed successfully"
+          echo "Database record count:"
+          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;"
+          echo "Recent monitoring results:"
+          sqlite3 monitor.db "SELECT name, status, responseTime, timestamp FROM requests ORDER BY timestamp DESC LIMIT 5;" || true
         else
-          echo "📝 No previous database found, starting fresh"
+          echo "❌ Database file not found after monitoring"
+          exit 1
         fi
 
-    - name: Verify URLs CSV exists
-      run: |
-        if [ ! -f urls.csv ]; then
-          echo "Creating default urls.csv file"
-          cat > urls.csv << EOF
-        url,name,countryCode
-        https://httpbin.org/status/200,HTTPBin Success,US
-        https://github.com,GitHub,US
-        https://www.google.com,Google,UK
-        EOF
-        fi
-        echo "URLs to monitor:"
-        cat urls.csv
-    
-    - name: Run URL monitoring
-      timeout-minutes: ${{ fromJSON(github.event.inputs.duration || '2') }}
-      run: |
-        echo "Starting single-pass URL monitoring..."
-        echo "Checking all URLs once in this iteration"
-        
-        # Set environment variables for configuration
-        export URLS_CSV_PATH="./urls.csv"
-        export NODE_ENV="production"
-        export HEADLESS="true"
-        export MONITOR_TIMEOUT=$((${{ github.event.inputs.duration || '2' }} * 60))
-        export CHECK_INTERVAL=$((${{ github.event.inputs.interval || '60' }} * 1000))
-        export SLACK_WEBHOOK_URL="${{ secrets.SLACK_WEBHOOK_URL }}"
-        export SINGLE_PASS="true"
-        
-        # Start monitoring in headless mode
-        npm run start:headless
-        
-        echo "Monitoring completed"
-
-    - name: 🧹 Database cleanup and optimization
-      if: always()
-      run: |
-        if [ -f monitoring.db ]; then
-          echo "🧹 Performing database cleanup..."
-          
-          # Install sqlite3 if not already installed
-          sudo apt-get update && sudo apt-get install -y sqlite3
-          
-          # Check database size before cleanup
-          BEFORE_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "📊 Records before cleanup: $BEFORE_COUNT"
-          
-          # Keep only last 7 days of data to prevent database from growing too large
-          sqlite3 monitoring.db "DELETE FROM requests WHERE datetime(timestamp) < datetime('now', '-7 days');" 2>/dev/null || echo "No cleanup needed"
-          
-          # Optimize database
-          sqlite3 monitoring.db "VACUUM;" 2>/dev/null || echo "Could not vacuum database"
-          
-          # Check database size after cleanup
-          AFTER_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "📊 Records after cleanup: $AFTER_COUNT"
-          echo "🗑️ Removed $((BEFORE_COUNT - AFTER_COUNT)) old records"
-          
-          # Show final database stats
-          echo "📈 Final database statistics:"
-          sqlite3 monitoring.db "
-            SELECT 
-              'Total records: ' || COUNT(*),
-              'Date range: ' || MIN(datetime(timestamp)) || ' to ' || MAX(datetime(timestamp)),
-              'Database size: ' || (SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()) || ' bytes'
-            FROM requests;
-          " 2>/dev/null || echo "Could not generate statistics"
-        fi
-      continue-on-error: true
-    
-    - name: Generate monitoring report
-      if: always()
-      run: |
-        if [ -f monitoring.db ]; then
-          echo "## URL Monitoring Report" > monitoring-report.md
-          echo "Generated on: $(date)" >> monitoring-report.md
-          echo "" >> monitoring-report.md
-          
-          # Install sqlite3 for report generation
-          sudo apt-get update && sudo apt-get install -y sqlite3
-          
-          # Generate basic stats
-          echo "### Summary Statistics" >> monitoring-report.md
-          echo "" >> monitoring-report.md
-          echo "| URL Name | Total Requests | Success Rate | Avg Response Time |" >> monitoring-report.md
-          echo "|----------|----------------|--------------|-------------------|" >> monitoring-report.md
-          
-          sqlite3 monitoring.db -separator "|" \
-            "SELECT name, 
-                    COUNT(*) as total_requests,
-                    ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) || '%' as success_rate,
-                    ROUND(AVG(responseTime), 0) || 'ms' as avg_response_time
-             FROM requests 
-             GROUP BY name;" | \
-          while IFS='|' read -r name total success avg_time; do
-            echo "| $name | $total | $success | $avg_time |" >> monitoring-report.md
-          done
-          
-          echo "" >> monitoring-report.md
-          echo "### Recent Results (Last 10)" >> monitoring-report.md
-          echo "" >> monitoring-report.md
-          echo "| Timestamp | URL Name | Status | Response Time | Success |" >> monitoring-report.md
-          echo "|-----------|----------|--------|---------------|---------|" >> monitoring-report.md
-          
-          sqlite3 monitoring.db -separator "|" \
-            "SELECT datetime(timestamp) as time, name, status, responseTime || 'ms', 
-                    CASE WHEN success = 1 THEN '✅' ELSE '❌' END
-             FROM requests 
-             ORDER BY timestamp DESC 
-             LIMIT 10;" | \
-          while IFS='|' read -r time name status resp_time success; do
-            echo "| $time | $name | $status | $resp_time | $success |" >> monitoring-report.md
-          done
-          
-          echo "" >> monitoring-report.md
-          echo "### Database Info" >> monitoring-report.md
-          echo "- Total records: $(sqlite3 monitoring.db 'SELECT COUNT(*) FROM requests;')" >> monitoring-report.md
-          echo "- Database size: $(du -h monitoring.db | cut -f1)" >> monitoring-report.md
-          
-          cat monitoring-report.md
-        else
-          echo "No monitoring database found"
-        fi
-    
-    - name: Upload monitoring database
-      if: always()
+    - name: Upload database artifact
       uses: actions/upload-artifact@v4
       with:
         name: monitoring-database
-        path: |
-          monitoring.db
-          monitoring-report.md
+        path: monitor.db
         retention-days: 30
+        compression-level: 9
 
-    - name: ✅ Monitoring Complete
-      if: always()
+    - name: Generate static files for GitHub Pages
       run: |
-        echo "🎯 URL monitoring cycle completed"
-        echo "📊 Database artifact uploaded for dashboard use" 
-        echo "🔄 Dashboard will update automatically via workflow_run trigger"
-    
-    - name: Comment PR with results
-      if: github.event_name == 'pull_request' && always()
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          if (fs.existsSync('monitoring-report.md')) {
-            const report = fs.readFileSync('monitoring-report.md', 'utf8');
+        mkdir -p public/api
+        if [ -f "monitor.db" ]; then
+          # Generate results.json for last 7 days
+          sqlite3 monitor.db -json "SELECT * FROM requests WHERE datetime(timestamp) >= datetime('now', '-7 days') ORDER BY timestamp DESC;" > public/api/results.json
+          
+          # Generate group-hierarchy.json
+          node -e "
+            const sqlite3 = require('sqlite3');
+            const fs = require('fs');
             
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 🔍 URL Monitoring Results\n\n${report}`
+            const db = new sqlite3.Database('monitor.db');
+            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL ORDER BY group_name, countryCode, name', (err, rows) => {
+              if (err) {
+                console.error('Error:', err);
+                process.exit(1);
+              }
+              
+              const hierarchyMap = new Map();
+              rows.forEach(row => {
+                const key = \`\${row.group_name}|\${row.countryCode || 'no-country'}\`;
+                if (!hierarchyMap.has(key)) {
+                  hierarchyMap.set(key, {
+                    group_name: row.group_name,
+                    countryCode: row.countryCode || undefined,
+                    urls: []
+                  });
+                }
+                const entry = hierarchyMap.get(key);
+                if (!entry.urls.find(u => u.url === row.url)) {
+                  entry.urls.push({ url: row.url, name: row.name });
+                }
+              });
+              
+              const hierarchy = Array.from(hierarchyMap.values());
+              fs.writeFileSync('public/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
+              console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
+              db.close();
             });
-          }
+          " || echo "No group data available"
+          
+          # Generate stats.json
+          sqlite3 monitor.db -json "
+            SELECT 
+              url, name, group_name, countryCode,
+              COUNT(*) as totalRequests,
+              SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+              SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
+              AVG(responseTime) as averageResponseTime,
+              MAX(timestamp) as lastChecked
+            FROM requests 
+            WHERE datetime(timestamp) >= datetime('now', '-24 hours')
+            GROUP BY url, name, group_name, countryCode
+            ORDER BY name
+          " > public/api/stats.json
+          
+          echo "📄 Generated static API files for GitHub Pages"
+          ls -la public/api/
+        else
+          echo "❌ No database found for static file generation"
+        fi
+
+    - name: Commit and push database updates
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add the static files
+        git add public/api/
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update monitoring data - $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || echo "Nothing to commit"
+          git push || echo "Push failed"
+        fi
+
+    - name: Deploy to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./public
+        enable_jekyll: false
+        cname: # Add your custom domain if you have one

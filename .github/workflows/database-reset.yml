@@ -1,0 +1,310 @@
+name: Database Reset
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_reset:
+        description: 'Type "DELETE" to confirm database reset'
+        required: true
+        type: string
+      backup_before_reset:
+        description: 'Create backup before reset'
+        required: false
+        type: boolean
+        default: true
+      initial_monitoring_runs:
+        description: 'Number of initial monitoring cycles to populate database'
+        required: false
+        type: number
+        default: 3
+
+jobs:
+  validate-input:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+    - name: Validate confirmation input
+      id: check
+      run: |
+        if [ "${{ github.event.inputs.confirm_reset }}" = "DELETE" ]; then
+          echo "proceed=true" >> $GITHUB_OUTPUT
+          echo "✅ Confirmation validated"
+        else
+          echo "proceed=false" >> $GITHUB_OUTPUT
+          echo "❌ Invalid confirmation. Must type 'DELETE' to proceed."
+          exit 1
+        fi
+
+  backup-current-database:
+    needs: validate-input
+    if: needs.validate-input.outputs.proceed == 'true' && github.event.inputs.backup_before_reset == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download current database
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: monitoring-database
+        path: .
+
+    - name: Create backup if database exists
+      run: |
+        if [ -f "monitor.db" ]; then
+          # Create timestamped backup
+          BACKUP_NAME="database-backup-$(date -u +%Y%m%d-%H%M%S)"
+          cp monitor.db "${BACKUP_NAME}.db"
+          
+          echo "📦 Created database backup: ${BACKUP_NAME}.db"
+          
+          # Get database stats for backup record
+          echo "Database statistics before reset:"
+          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;" || echo "Could not read database"
+          sqlite3 monitor.db "SELECT MIN(timestamp) as oldest_record, MAX(timestamp) as newest_record FROM requests;" || echo "Could not read timestamps"
+          
+          # Upload backup as artifact
+          echo "backup_name=${BACKUP_NAME}" >> $GITHUB_ENV
+        else
+          echo "No existing database found to backup"
+          echo "backup_name=" >> $GITHUB_ENV
+        fi
+
+    - name: Upload backup artifact
+      if: env.backup_name != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.backup_name }}
+        path: ${{ env.backup_name }}.db
+        retention-days: 90
+        compression-level: 9
+
+  reset-database:
+    needs: [validate-input, backup-current-database]
+    if: always() && needs.validate-input.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build TypeScript
+      run: npm run build
+
+    - name: Delete existing database artifact
+      continue-on-error: true
+      run: |
+        echo "🗑️ Removing existing database artifact..."
+        # Note: GitHub Actions doesn't provide a direct way to delete artifacts via API
+        # The artifact will be replaced when we upload the new one
+        echo "Existing database artifact will be replaced with fresh database"
+
+    - name: Remove local database file
+      run: |
+        if [ -f "monitor.db" ]; then
+          rm -f monitor.db
+          echo "🗑️ Removed local database file"
+        else
+          echo "No local database file to remove"
+        fi
+
+    - name: Initialize fresh database
+      env:
+        URLS_CSV_PATH: urls.csv
+        MONITOR_TIMEOUT: 30000
+      run: |
+        echo "🆕 Initializing fresh database..."
+        
+        # Run headless monitor to create database schema and initial data
+        npm run headless
+        
+        # Verify database creation
+        if [ -f "monitor.db" ]; then
+          echo "✅ Fresh database created successfully"
+          
+          # Display initial database statistics
+          echo "Fresh database statistics:"
+          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;"
+          sqlite3 monitor.db "SELECT name, status, timestamp FROM requests ORDER BY timestamp DESC LIMIT 5;" || echo "No records yet"
+          
+          # Show database schema
+          echo "Database schema:"
+          sqlite3 monitor.db ".schema requests"
+        else
+          echo "❌ Failed to create fresh database"
+          exit 1
+        fi
+
+    - name: Run initial monitoring cycles
+      if: github.event.inputs.initial_monitoring_runs > 0
+      env:
+        URLS_CSV_PATH: urls.csv
+        MONITOR_TIMEOUT: 30000
+      run: |
+        CYCLES=${{ github.event.inputs.initial_monitoring_runs }}
+        echo "🔄 Running ${CYCLES} initial monitoring cycles to populate database..."
+        
+        for i in $(seq 1 $CYCLES); do
+          echo "Running monitoring cycle ${i}/${CYCLES}..."
+          npm run headless
+          
+          # Brief pause between cycles
+          if [ $i -lt $CYCLES ]; then
+            echo "Waiting 30 seconds before next cycle..."
+            sleep 30
+          fi
+        done
+        
+        # Display final statistics
+        echo "Final database statistics after ${CYCLES} cycles:"
+        sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;"
+        sqlite3 monitor.db "SELECT name, COUNT(*) as records_per_url FROM requests GROUP BY name ORDER BY name;"
+
+    - name: Generate fresh static files
+      run: |
+        echo "📄 Generating fresh static API files..."
+        
+        mkdir -p public/api
+        
+        if [ -f "monitor.db" ]; then
+          # Generate results.json
+          sqlite3 monitor.db -json "SELECT * FROM requests ORDER BY timestamp DESC LIMIT 1000;" > public/api/results.json
+          
+          # Generate group-hierarchy.json
+          node -e "
+            const sqlite3 = require('sqlite3');
+            const fs = require('fs');
+            
+            const db = new sqlite3.Database('monitor.db');
+            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL ORDER BY group_name, countryCode, name', (err, rows) => {
+              if (err) {
+                console.error('Error:', err);
+                process.exit(1);
+              }
+              
+              const hierarchyMap = new Map();
+              rows.forEach(row => {
+                const key = \`\${row.group_name}|\${row.countryCode || 'no-country'}\`;
+                if (!hierarchyMap.has(key)) {
+                  hierarchyMap.set(key, {
+                    group_name: row.group_name,
+                    countryCode: row.countryCode || undefined,
+                    urls: []
+                  });
+                }
+                const entry = hierarchyMap.get(key);
+                if (!entry.urls.find(u => u.url === row.url)) {
+                  entry.urls.push({ url: row.url, name: row.name });
+                }
+              });
+              
+              const hierarchy = Array.from(hierarchyMap.values());
+              fs.writeFileSync('public/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
+              console.log(\`Generated fresh hierarchy with \${hierarchy.length} groups\`);
+              db.close();
+            });
+          " || echo "No group data available yet"
+          
+          # Generate stats.json
+          sqlite3 monitor.db -json "
+            SELECT 
+              url, name, group_name, countryCode,
+              COUNT(*) as totalRequests,
+              SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+              SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
+              AVG(responseTime) as averageResponseTime,
+              MAX(timestamp) as lastChecked
+            FROM requests 
+            GROUP BY url, name, group_name, countryCode
+            ORDER BY name
+          " > public/api/stats.json
+          
+          echo "✅ Generated fresh static API files"
+          ls -la public/api/
+        else
+          echo "❌ No database found for static file generation"
+        fi
+
+    - name: Upload fresh database
+      uses: actions/upload-artifact@v4
+      with:
+        name: monitoring-database
+        path: monitor.db
+        retention-days: 30
+        compression-level: 9
+
+    - name: Commit fresh static files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action - Database Reset"
+        
+        # Add the fresh static files
+        git add public/api/
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No static file changes to commit"
+        else
+          git commit -m "Database reset - fresh static files generated $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git push
+        fi
+
+    - name: Deploy fresh files to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./public
+        enable_jekyll: false
+
+    - name: Database reset summary
+      run: |
+        echo "🎉 Database reset completed successfully!"
+        echo ""
+        echo "Summary:"
+        if [ -f "monitor.db" ]; then
+          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;")
+          echo "- Fresh database created with ${RECORD_COUNT} initial records"
+          echo "- Initial monitoring cycles: ${{ github.event.inputs.initial_monitoring_runs }}"
+          echo "- Backup created: ${{ github.event.inputs.backup_before_reset }}"
+          echo "- Static API files regenerated"
+          echo "- Database artifact uploaded for future workflow runs"
+        else
+          echo "❌ Database file not found after reset"
+        fi
+        echo ""
+        echo "Next steps:"
+        echo "- Regular monitoring will continue with the fresh database"
+        echo "- Dashboard will show data from the new monitoring cycles"
+        echo "- Old backup is preserved in artifacts if backup was enabled"
+
+  notify-reset-completion:
+    needs: [reset-database]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Database reset notification
+      run: |
+        if [ "${{ needs.reset-database.result }}" = "success" ]; then
+          echo "✅ Database reset workflow completed successfully"
+          echo "The monitoring database has been completely reset and repopulated"
+        else
+          echo "❌ Database reset workflow failed"
+          echo "Check the logs above for error details"
+          exit 1
+        fi

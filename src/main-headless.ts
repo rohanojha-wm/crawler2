@@ -18,27 +18,38 @@ class HeadlessApplication {
         try {
             console.log('🤖 Starting Headless URL Monitor...');
 
-            // Initialize database
-            await this.database.initialize();
-            console.log('✅ Database initialized');
+            // Initialize database (will use existing file if present)
+            const dbPath = process.env.DATABASE_PATH || 'monitor.db';
+            await this.database.initialize(dbPath);
+            console.log(`✅ Database initialized: ${dbPath}`);
 
-            // Load configuration
+            // Check existing record count
+            const existingResults = await this.database.getResults('-30 days');
+            console.log(`📊 Existing database records: ${existingResults.length}`);
+
+            // Load configuration from CSV or JSON
             const config = await this.loadConfiguration();
-            console.log(`✅ Configuration loaded: ${config.urls.length} URLs`);
+            console.log(`✅ Configuration loaded: ${config.urls.length} URLs to monitor`);
 
-            // Run single check cycle
+            // Run single monitoring cycle for all URLs
             await this.runSingleCycle(config);
+
+            // Verify new record count
+            const newResults = await this.database.getResults('-30 days');
+            const newRecords = newResults.length - existingResults.length;
+            console.log(`📈 Added ${newRecords} new monitoring records`);
+            console.log(`📊 Total database records: ${newResults.length}`);
 
             // Generate static files for GitHub Pages
             await this.generateStaticFiles();
 
-            // Cleanup old data
+            // Cleanup old data to prevent database bloat
             await this.cleanupOldData();
 
-            console.log('🎉 Headless run completed successfully!');
+            console.log('🎉 Headless monitoring cycle completed successfully!');
 
         } catch (error: any) {
-            console.error('❌ Headless run failed:', error.message);
+            console.error('❌ Headless monitoring failed:', error.message);
             process.exit(1);
         } finally {
             await this.database.close();
@@ -50,23 +61,26 @@ class HeadlessApplication {
         const jsonPath = 'config.json';
 
         try {
+            // CSV-based configuration (recommended)
+            console.log(`Loading configuration from CSV: ${csvPath}`);
             return await ConfigLoader.loadFromCSV(csvPath, {
                 defaultInterval: 60000, // Single check, interval doesn't matter
                 timeout: parseInt(process.env.MONITOR_TIMEOUT || '30000')
             });
         } catch (csvError) {
-            console.warn(`CSV loading failed: ${csvError}. Trying JSON...`);
+            console.warn(`CSV loading failed: ${csvError}. Trying JSON fallback...`);
             
             try {
+                // JSON configuration fallback
                 return await ConfigLoader.loadFromJSON(jsonPath);
             } catch (jsonError) {
-                throw new Error(`Failed to load configuration: ${csvError}, ${jsonError}`);
+                throw new Error(`Failed to load configuration from both CSV and JSON: ${csvError}, ${jsonError}`);
             }
         }
     }
 
     private async runSingleCycle(config: MonitorConfig): Promise<void> {
-        console.log('🔄 Running single monitoring cycle...');
+        console.log('🔄 Running single monitoring cycle for all URLs...');
         
         const promises = config.urls.map(async (urlConfig) => {
             try {
@@ -76,8 +90,13 @@ class HeadlessApplication {
                 const response = await fetch(urlConfig.url, {
                     method: 'GET',
                     headers: {
-                        'User-Agent': 'URL-Monitor/1.0',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                        'User-Agent': 'URL-Monitor/1.0 (GitHub-Actions)',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Accept-Encoding': 'gzip, deflate',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1'
                     },
                     signal: AbortSignal.timeout(config.timeout || 30000)
                 });
@@ -119,45 +138,45 @@ class HeadlessApplication {
         });
 
         await Promise.all(promises);
-        console.log('✅ Monitoring cycle completed');
+        console.log('✅ Monitoring cycle completed for all URLs');
     }
 
     private async generateStaticFiles(): Promise<void> {
         try {
-            console.log('📄 Generating static files for GitHub Pages...');
+            console.log('📄 Generating static API files for GitHub Pages...');
 
             // Ensure public/api directory exists
             const apiDir = path.join('public', 'api');
             await fs.mkdir(apiDir, { recursive: true });
 
-            // Generate results.json
+            // Generate results.json (last 7 days for dashboard)
             const results = await this.database.getResults('-7 days');
             await fs.writeFile(
                 path.join(apiDir, 'results.json'),
                 JSON.stringify(results, null, 2)
             );
 
-            // Generate group-hierarchy.json
+            // Generate group-hierarchy.json for dashboard drilldown
             const hierarchy = await this.database.getGroupHierarchy();
             await fs.writeFile(
                 path.join(apiDir, 'group-hierarchy.json'),
                 JSON.stringify(hierarchy, null, 2)
             );
 
-            // Generate stats.json
+            // Generate stats.json for dashboard overview
             const stats = await this.database.getStats('-24 hours');
             await fs.writeFile(
                 path.join(apiDir, 'stats.json'),
                 JSON.stringify(stats, null, 2)
             );
 
-            console.log('✅ Static files generated');
-            console.log(`   - Results: ${results.length} entries`);
-            console.log(`   - Groups: ${hierarchy.length} groups`);
-            console.log(`   - Stats: ${stats.length} URLs`);
+            console.log('✅ Static API files generated successfully');
+            console.log(`   - Results: ${results.length} entries (last 7 days)`);
+            console.log(`   - Groups: ${hierarchy.length} group hierarchies`);
+            console.log(`   - Stats: ${stats.length} URL statistics (last 24 hours)`);
 
         } catch (error: any) {
-            console.error('❌ Failed to generate static files:', error.message);
+            console.error('❌ Failed to generate static API files:', error.message);
             throw error;
         }
     }
@@ -168,10 +187,12 @@ class HeadlessApplication {
             const deletedRows = await this.database.cleanup(cleanupDays);
             
             if (deletedRows > 0) {
-                console.log(`🧹 Cleaned up ${deletedRows} old records (older than ${cleanupDays} days)`);
+                console.log(`🧹 Cleaned up ${deletedRows} old monitoring records (older than ${cleanupDays} days)`);
+            } else {
+                console.log(`🧹 No old records to cleanup (keeping ${cleanupDays} days of data)`);
             }
         } catch (error: any) {
-            console.warn('⚠️ Cleanup failed:', error.message);
+            console.warn('⚠️ Database cleanup failed:', error.message);
         }
     }
 }
