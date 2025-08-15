@@ -46,24 +46,40 @@ jobs:
     - name: 🏗️ Build TypeScript following your project structure
       run: npm run build
 
-    - name: 📊 Check for existing database in repository
+    - name: 📊 Restore existing database from repository
       run: |
+        echo "🔍 Checking for existing database in repository..."
         if [ -f "data/monitor.db" ]; then
-          echo "✅ Found existing database in repository"
+          echo "✅ Found existing database in repository: data/monitor.db"
           cp data/monitor.db monitor.db
+          
+          # Verify database integrity following your database.ts schema
           RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
           echo "📊 Current records: $RECORD_COUNT"
           
-          # Show database health
-          echo "🔍 Database health check:"
-          sqlite3 monitor.db "SELECT 
-            COUNT(*) as total_records,
-            COUNT(DISTINCT url) as unique_urls,
-            MIN(datetime(timestamp)) as oldest_record,
-            MAX(datetime(timestamp)) as newest_record
-          FROM requests;" 2>/dev/null || echo "Database health check failed"
+          if [ "$RECORD_COUNT" -gt 0 ]; then
+            echo "🔍 Database health check:"
+            sqlite3 monitor.db "
+              SELECT 
+                COUNT(*) as total_records,
+                COUNT(DISTINCT url) as unique_urls,
+                MIN(datetime(timestamp)) as oldest_record,
+                MAX(datetime(timestamp)) as newest_record
+              FROM requests;
+            " 2>/dev/null || echo "Database health check failed"
+            
+            echo "📈 Recent activity:"
+            sqlite3 monitor.db "
+              SELECT 
+                COUNT(*) as recent_checks,
+                ROUND(AVG(CASE WHEN success = 1 THEN 100.0 ELSE 0.0 END), 1) || '%' as success_rate
+              FROM requests 
+              WHERE datetime(timestamp) >= datetime('now', '-24 hours');
+            " 2>/dev/null || echo "No recent activity"
+          fi
         else
-          echo "🆕 No existing database found, will create fresh one"
+          echo "🆕 No existing database found in repository"
+          echo "📁 Creating data directory for database storage"
           mkdir -p data
         fi
 
@@ -90,6 +106,8 @@ jobs:
             CREATE INDEX IF NOT EXISTS idx_requests_country ON requests(countryCode);
           "
           echo "✅ Fresh database initialized with your monitoring schema"
+        else
+          echo "✅ Using existing database with historical data"
         fi
 
     - name: 📋 Verify CSV configuration following your guidelines
@@ -98,8 +116,8 @@ jobs:
           echo "⚠️ urls.csv not found, creating sample following your format"
           cat > urls.csv << 'EOF'
         url,name,countryCode,group_name
-        https://httpstat.us/200,HTTP Status 200,US,Test APIs
-        https://httpstat.us/404,HTTP Status 404,US,Test APIs
+        https://httpstat.us/200,HTTP Status 200,US,API Tests
+        https://httpstat.us/404,HTTP Status 404,US,API Tests
         https://httpbin.org/delay/1,HTTPBin Delay Test,GB,Network Tests
         https://httpbin.org/status/500,Server Error Test,DE,Error Tests
         https://www.google.com,Google Homepage,US,Production Sites
@@ -120,7 +138,19 @@ jobs:
         CHECK_INTERVAL: 60000
       run: |
         echo "🔄 Starting URL monitoring cycle using your headless application..."
+        
+        # Record pre-monitoring stats
+        PRE_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        echo "📊 Records before monitoring: $PRE_COUNT"
+        
+        # Run monitoring
         npm run headless
+        
+        # Record post-monitoring stats
+        POST_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        NEW_RECORDS=$((POST_COUNT - PRE_COUNT))
+        echo "📈 Records after monitoring: $POST_COUNT"
+        echo "🆕 New records added: $NEW_RECORDS"
 
     - name: 📈 Verify monitoring results following your database schema
       run: |
@@ -153,7 +183,7 @@ jobs:
           
           # Success rate statistics by group
           echo ""
-          echo "📈 Success rates by group:"
+          echo "📈 Success rates by group (last 24 hours):"
           sqlite3 monitor.db "
             SELECT 
               COALESCE(group_name, 'Ungrouped') as group_name,
@@ -171,23 +201,29 @@ jobs:
           exit 1
         fi
 
-    - name: 💾 Store database in repository for persistence
+    - name: 💾 Save database to repository BEFORE generating API files
       run: |
-        # Copy database to data directory for repository storage
+        echo "💾 Saving database to repository for persistence..."
+        
+        # Ensure data directory exists
         mkdir -p data
+        
+        # Copy current database to repository storage
         cp monitor.db data/monitor.db
         
-        # Create database backup with timestamp
+        # Create timestamped backup following your backup strategy
         BACKUP_NAME="monitor-backup-$(date -u +%Y%m%d-%H%M%S).db"
         cp monitor.db "data/$BACKUP_NAME"
         
-        echo "💾 Database stored in repository:"
-        echo "   📁 Primary: data/monitor.db"
+        echo "✅ Database saved:"
+        echo "   📁 Primary: data/monitor.db ($(ls -lh data/monitor.db | awk '{print $5}'))"
         echo "   🗄️ Backup: data/$BACKUP_NAME"
         
-        # Keep only last 5 backups to prevent repository bloat
-        cd data && ls -t monitor-backup-*.db 2>/dev/null | tail -n +6 | xargs -r rm
-        echo "🧹 Old backups cleaned up"
+        # Keep only last 10 backups to prevent repository bloat
+        cd data
+        ls -t monitor-backup-*.db 2>/dev/null | tail -n +11 | xargs -r rm
+        BACKUP_COUNT=$(ls monitor-backup-*.db 2>/dev/null | wc -l)
+        echo "🧹 Backup cleanup completed, keeping $BACKUP_COUNT backups"
 
     - name: 📄 Generate static API files following your endpoint structure
       run: |
@@ -270,7 +306,7 @@ jobs:
           }
         " || echo "[]" > public/api/group-hierarchy.json
         
-        # Add monitoring metadata to API files
+        # Add monitoring metadata following your API structure
         TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
         cat > public/api/metadata.json << EOF
         {
@@ -278,7 +314,8 @@ jobs:
           "totalRecords": $TOTAL_RECORDS,
           "timeRange": "$TIME_RANGE hours",
           "workflowRun": "${{ github.run_number }}",
-          "repository": "${{ github.repository }}"
+          "repository": "${{ github.repository }}",
+          "version": "1.0.0"
         }
         EOF
         
@@ -290,28 +327,49 @@ jobs:
 
     - name: 📝 Commit database changes to repository
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action - URL Monitor"
+        echo "📝 Preparing to commit database changes..."
         
-        # Add database files to repository
+        # Configure Git for GitHub Actions
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        
+        # Add all database files
         git add data/
         
-        # Check if there are changes to commit
+        # Check if there are actual changes to commit
         if git diff --staged --quiet; then
-          echo "📝 No database changes to commit"
+          echo "📝 No database changes to commit (database already up to date)"
         else
-          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          git commit -m "Update monitoring database - $RECORD_COUNT records ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+          # Get current record count for commit message
+          RECORD_COUNT=$(sqlite3 data/monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          RECENT_COUNT=$(sqlite3 data/monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
+          
+          # Create descriptive commit message
+          COMMIT_MSG="📊 Update monitoring database
+          
+          - Total records: $RECORD_COUNT
+          - New records this hour: $RECENT_COUNT
+          - Timestamp: $(date -u '+%Y-%m-%d %H:%M UTC')
+          - Workflow run: ${{ github.run_number }}"
+          
+          echo "📝 Committing database changes..."
+          git commit -m "$COMMIT_MSG"
           
           # Push with retry logic for potential conflicts
-          for i in {1..3}; do
-            if git push; then
-              echo "✅ Database changes pushed to repository"
+          echo "📤 Pushing database changes to repository..."
+          for i in {1..5}; do
+            if git push origin main; then
+              echo "✅ Database changes pushed successfully to repository"
               break
             else
-              echo "⚠️ Push failed, attempt $i/3"
-              git pull --rebase
-              sleep 5
+              echo "⚠️ Push failed, attempt $i/5. Pulling latest changes..."
+              git pull --rebase origin main
+              sleep $((i * 2))  # Exponential backoff
+            fi
+            
+            if [ $i -eq 5 ]; then
+              echo "❌ Failed to push after 5 attempts"
+              exit 1
             fi
           done
         fi
@@ -330,19 +388,20 @@ jobs:
       run: |
         echo "🎉 URL monitoring and dashboard deployment completed!"
         echo ""
-        echo "📊 Summary:"
-        TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-        RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
+        echo "📊 Final Summary:"
+        TOTAL_RECORDS=$(sqlite3 data/monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        RECENT_RECORDS=$(sqlite3 data/monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
         
         echo "   📋 Total database records: $TOTAL_RECORDS"
         echo "   🔄 Records added this hour: $RECENT_RECORDS"
         echo "   💾 Database size: $(ls -lh data/monitor.db | awk '{print $5}' 2>/dev/null || echo 'Unknown')"
         echo "   📁 API files deployed: $(ls public/api/ 2>/dev/null | wc -l) files"
+        echo "   🗄️ Database backups: $(ls data/monitor-backup-*.db 2>/dev/null | wc -l) files"
         echo ""
         echo "🌐 Dashboard URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
         echo "⏰ Next monitoring cycle: $(date -d '+15 minutes' -u '+%Y-%m-%d %H:%M UTC')"
         echo ""
-        echo "🔗 API Endpoints (static):"
+        echo "🔗 API Endpoints:"
         echo "   📊 Results: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/results.json"
         echo "   📈 Stats: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/stats.json"
         echo "   🏗️ Groups: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/group-hierarchy.json"
