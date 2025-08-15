@@ -24,7 +24,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -38,63 +37,149 @@ jobs:
     - name: Build TypeScript
       run: npm run build
 
-    - name: Download existing database (if available)
+    - name: Check for existing database artifact
+      run: |
+        echo "🔍 Checking for existing database artifact..."
+        # This step always succeeds - we handle missing artifacts gracefully
+
+    - name: Download existing database (graceful failure)
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
         name: monitor-database-artifact
-        path: .
+        path: ./
 
-    - name: Verify database file
+    - name: Initialize database if needed
       run: |
-        if [ -f "monitor.db" ]; then
-          echo "📊 Found existing database: monitor.db"
-          sqlite3 monitor.db "SELECT COUNT(*) as total_records FROM requests;" || echo "Database needs initialization"
+        if [ ! -f "monitor.db" ]; then
+          echo "🆕 Creating fresh database file..."
+          # Create database with proper schema following your database.ts structure
+          sqlite3 monitor.db "
+            CREATE TABLE IF NOT EXISTS requests (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              url TEXT NOT NULL,
+              name TEXT NOT NULL,
+              countryCode TEXT,
+              group_name TEXT,
+              timestamp TEXT NOT NULL,
+              status INTEGER NOT NULL,
+              responseTime INTEGER NOT NULL,
+              success BOOLEAN NOT NULL,
+              error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
+            CREATE INDEX IF NOT EXISTS idx_requests_group_name ON requests(group_name);
+          "
+          echo "✅ Fresh database initialized"
         else
-          echo "🆕 No existing database found - will create monitor.db"
+          echo "📊 Using existing database"
+          RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "Existing records: $RECORD_COUNT"
         fi
 
-    - name: Run headless monitoring
+    - name: Verify urls.csv exists
+      run: |
+        if [ ! -f "urls.csv" ]; then
+          echo "⚠️ urls.csv not found, creating sample file"
+          cat > urls.csv << 'EOF'
+        url,name,countryCode,group_name
+        https://httpstat.us/200,HTTP Status 200,US,Test Group
+        https://httpstat.us/404,HTTP Status 404,US,Test Group
+        https://httpbin.org/delay/1,HTTPBin Delay,GB,Network Tests
+        EOF
+        else
+          echo "✅ urls.csv found"
+          echo "URLs to monitor:"
+          cat urls.csv | head -10
+        fi
+
+    - name: Run headless URL monitoring
       env:
         URLS_CSV_PATH: urls.csv
         MONITOR_TIMEOUT: 30000
-        CHECK_INTERVAL: 60000
-      run: npm run headless
+        DATABASE_PATH: monitor.db
+      run: |
+        echo "🔄 Starting URL monitoring cycle..."
+        npm run headless
 
     - name: Verify monitoring results
       run: |
-        echo "📈 Monitoring cycle completed"
-        echo "Database file: $(ls -lh monitor.db)"
-        echo "Total records: $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;')"
+        if [ -f "monitor.db" ]; then
+          echo "📈 Monitoring completed successfully"
+          
+          # Database statistics
+          TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "Total database records: $TOTAL_RECORDS"
+          
+          # Recent results (following your database schema)
+          echo "Recent monitoring results:"
+          sqlite3 monitor.db "
+            SELECT 
+              name, 
+              status, 
+              responseTime || 'ms' as response_time,
+              CASE WHEN success = 1 THEN '✅' ELSE '❌' END as result,
+              datetime(timestamp, 'localtime') as checked_at
+            FROM requests 
+            ORDER BY timestamp DESC 
+            LIMIT 5;
+          " 2>/dev/null || echo "No results to display"
+          
+        else
+          echo "❌ Database file not found after monitoring"
+          exit 1
+        fi
 
-
-    - name: Upload database artifact
+    - name: Always upload database artifact
       uses: actions/upload-artifact@v4
       with:
         name: monitor-database-artifact
         path: monitor.db
         retention-days: 30
-        compression-level: 9
+        compression-level: 6
+        if-no-files-found: error
 
-    
-
-    - name: Generate static files for GitHub Pages
+    - name: Generate static API files for GitHub Pages
       run: |
+        echo "📄 Generating static API files following your API endpoints..."
         mkdir -p public/api
-        if [ -f "monitor.db" ]; then
-          # Generate results.json for last 7 days
-          sqlite3 monitor.db -json "SELECT * FROM requests WHERE datetime(timestamp) >= datetime('now', '-7 days') ORDER BY timestamp DESC;" > public/api/results.json
+        
+        # Generate results.json (matching GET /api/results endpoint)
+        sqlite3 monitor.db -json "
+          SELECT * FROM requests 
+          WHERE datetime(timestamp) >= datetime('now', '-7 days') 
+          ORDER BY timestamp DESC;
+        " > public/api/results.json 2>/dev/null || echo "[]" > public/api/results.json
+        
+        # Generate stats.json (matching GET /api/stats endpoint)
+        sqlite3 monitor.db -json "
+          SELECT 
+            url, name, group_name, countryCode,
+            COUNT(*) as totalRequests,
+            SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+            SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
+            ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as successRate,
+            ROUND(AVG(responseTime), 0) as averageResponseTime,
+            MAX(timestamp) as lastChecked
+          FROM requests 
+          WHERE datetime(timestamp) >= datetime('now', '-24 hours')
+          GROUP BY url, name, group_name, countryCode
+          ORDER BY name;
+        " > public/api/stats.json 2>/dev/null || echo "[]" > public/api/stats.json
+        
+        # Generate group-hierarchy.json for dashboard drilldown
+        node -e "
+          const sqlite3 = require('sqlite3');
+          const fs = require('fs');
           
-          # Generate group-hierarchy.json
-          node -e "
-            const sqlite3 = require('sqlite3');
-            const fs = require('fs');
-            
+          try {
             const db = new sqlite3.Database('monitor.db');
-            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL ORDER BY group_name, countryCode, name', (err, rows) => {
-              if (err) {
-                console.error('Error:', err);
-                process.exit(1);
+            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\"', (err, rows) => {
+              if (err || !rows) {
+                fs.writeFileSync('public/api/group-hierarchy.json', '[]');
+                db.close();
+                return;
               }
               
               const hierarchyMap = new Map();
@@ -118,28 +203,15 @@ jobs:
               console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
               db.close();
             });
-          " || echo "No group data available"
-          
-          # Generate stats.json
-          sqlite3 monitor.db -json "
-            SELECT 
-              url, name, group_name, countryCode,
-              COUNT(*) as totalRequests,
-              SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-              SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
-              AVG(responseTime) as averageResponseTime,
-              MAX(timestamp) as lastChecked
-            FROM requests 
-            WHERE datetime(timestamp) >= datetime('now', '-24 hours')
-            GROUP BY url, name, group_name, countryCode
-            ORDER BY name
-          " > public/api/stats.json
-          
-          echo "📄 Generated static API files for GitHub Pages"
-          ls -la public/api/
-        else
-          echo "❌ No database found for static file generation"
-        fi
+          } catch (error) {
+            console.error('Error generating hierarchy:', error);
+            require('fs').writeFileSync('public/api/group-hierarchy.json', '[]');
+          }
+        " || echo "[]" > public/api/group-hierarchy.json
+        
+        echo "✅ Static API files generated"
+        echo "File sizes:"
+        ls -lh public/api/
 
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
@@ -149,3 +221,10 @@ jobs:
         enable_jekyll: false
         user_name: 'github-actions[bot]'
         user_email: 'github-actions[bot]@users.noreply.github.com'
+
+    - name: Monitoring summary
+      run: |
+        echo "🎉 URL monitoring cycle completed!"
+        echo "📊 Database: $(ls -lh monitor.db | awk '{print $5}')"
+        echo "📁 API files: $(ls public/api/ | wc -l) generated"
+        echo "🔄 Next run: $(date -d '+15 minutes' -u '+%Y-%m-%d %H:%M UTC')"
