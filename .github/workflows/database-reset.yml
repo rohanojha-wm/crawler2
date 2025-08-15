@@ -18,6 +18,11 @@ on:
         type: number
         default: 3
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   validate-input:
     runs-on: ubuntu-latest
@@ -106,14 +111,6 @@ jobs:
     - name: Build TypeScript
       run: npm run build
 
-    - name: Delete existing database artifact
-      continue-on-error: true
-      run: |
-        echo "🗑️ Removing existing database artifact..."
-        # Note: GitHub Actions doesn't provide a direct way to delete artifacts via API
-        # The artifact will be replaced when we upload the new one
-        echo "Existing database artifact will be replaced with fresh database"
-
     - name: Remove local database file
       run: |
         if [ -f "monitor.db" ]; then
@@ -185,7 +182,7 @@ jobs:
           # Generate results.json
           sqlite3 monitor.db -json "SELECT * FROM requests ORDER BY timestamp DESC LIMIT 1000;" > public/api/results.json
           
-          # Generate group-hierarchy.json
+          # Generate group-hierarchy.json using Node.js
           node -e "
             const sqlite3 = require('sqlite3');
             const fs = require('fs');
@@ -248,29 +245,14 @@ jobs:
         retention-days: 30
         compression-level: 9
 
-    - name: Commit fresh static files
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action - Database Reset"
-        
-        # Add the fresh static files
-        git add public/api/
-        
-        # Check if there are changes to commit
-        if git diff --staged --quiet; then
-          echo "No static file changes to commit"
-        else
-          git commit -m "Database reset - fresh static files generated $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          git push
-        fi
-
     - name: Deploy fresh files to GitHub Pages
-      if: github.ref == 'refs/heads/main'
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./public
         enable_jekyll: false
+        user_name: 'github-actions[bot]'
+        user_email: 'github-actions[bot]@users.noreply.github.com'
 
     - name: Database reset summary
       run: |
@@ -292,19 +274,3 @@ jobs:
         echo "- Regular monitoring will continue with the fresh database"
         echo "- Dashboard will show data from the new monitoring cycles"
         echo "- Old backup is preserved in artifacts if backup was enabled"
-
-  notify-reset-completion:
-    needs: [reset-database]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-    - name: Database reset notification
-      run: |
-        if [ "${{ needs.reset-database.result }}" = "success" ]; then
-          echo "✅ Database reset workflow completed successfully"
-          echo "The monitoring database has been completely reset and repopulated"
-        else
-          echo "❌ Database reset workflow failed"
-          echo "Check the logs above for error details"
-          exit 1
-        fi
