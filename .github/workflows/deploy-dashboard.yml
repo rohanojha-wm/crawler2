@@ -60,7 +60,7 @@ jobs:
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v4
         with:
-          name: monitoring-database
+          name: monitor-database-artifact
           path: ./
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -70,9 +70,23 @@ jobs:
         if: github.event_name != 'workflow_run'
         uses: actions/download-artifact@v4
         with:
-          name: monitoring-database
+          name: monitor-database-artifact
           path: ./
         continue-on-error: true
+
+      - name: 🔍 Verify database file
+        run: |
+          echo "=== Database Status Check ==="
+          if [ -f "monitor.db" ]; then
+            echo "✅ Found database file: monitor.db"
+            echo "📏 Database size: $(ls -lh monitor.db | awk '{print $5}')"
+            echo "📊 Testing database connection..."
+            sqlite3 monitor.db "SELECT COUNT(*) as record_count FROM requests;" 2>/dev/null || echo "⚠️ Database connection test failed"
+          else
+            echo "❌ Database file not found (monitor.db)"
+            echo "🔍 Available files:"
+            ls -la ./
+          fi
 
       - name: 🎨 Generate static dashboard
         run: |
@@ -88,10 +102,12 @@ jobs:
           echo '[]' > static-dashboard/api/results.json
           echo '[]' > static-dashboard/api/status-codes.json
           echo '[]' > static-dashboard/api/failed-requests.json
+          echo '[]' > static-dashboard/api/stats.json
+          echo '[]' > static-dashboard/api/group-hierarchy.json
           
           # If database exists, try to generate real data
-          if [ -f "monitoring.db" ]; then
-            echo "📊 Database found, generating static API data..."
+          if [ -f "monitor.db" ]; then
+            echo "📊 Database found (monitor.db), generating static API data..."
             
             # Set time range (default 24 hours, configurable via workflow input)
             TIME_RANGE="${{ github.event.inputs.time_range_hours || '24' }}"
@@ -101,42 +117,75 @@ jobs:
             sudo apt-get update && sudo apt-get install -y sqlite3
             
             # Check if tables exist and have data
-            TABLE_COUNT=$(sqlite3 monitoring.db ".tables" | wc -l)
+            TABLE_COUNT=$(sqlite3 monitor.db ".tables" | wc -l)
             if [ "$TABLE_COUNT" -gt 0 ]; then
-              RECORD_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+              RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
               echo "📋 Found $RECORD_COUNT records in database"
               
               if [ "$RECORD_COUNT" -gt 0 ]; then
                 echo "🔄 Extracting real data from database..."
                 
-                # Generate groups data with real statistics
-                sqlite3 -json monitoring.db "
+                # Generate groups data with real statistics (following URL Monitor schema)
+                sqlite3 -json monitor.db "
                   SELECT 
-                    CASE 
-                      WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
-                      WHEN name LIKE '%D+%' OR name LIKE '%Discovery%' OR url LIKE '%discoveryplus%' THEN 'Discovery Plus'
-                      ELSE 'Other'
-                    END as group_name,
+                    COALESCE(group_name, 'Ungrouped') as group_name,
+                    COALESCE(countryCode, 'Global') as countryCode,
                     COUNT(*) as total_requests,
                     ROUND(AVG(CASE WHEN success = 1 THEN 100.0 ELSE 0.0 END), 1) as success_rate,
                     ROUND(AVG(responseTime), 0) as avg_response_time,
-                    COUNT(DISTINCT url) as url_count
+                    COUNT(DISTINCT url) as url_count,
+                    MAX(timestamp) as last_check
                   FROM requests 
                   WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
-                  GROUP BY 
-                    CASE 
-                      WHEN name LIKE '%Max%' OR url LIKE '%max.com%' THEN 'Max Streaming'
-                      WHEN name LIKE '%D+%' OR name LIKE '%Discovery%' OR url LIKE '%discoveryplus%' THEN 'Discovery Plus'
-                      ELSE 'Other'
-                    END
+                  GROUP BY group_name, countryCode
+                  ORDER BY group_name, countryCode
                 " > static-dashboard/api/groups.json
                 
+                # Generate group hierarchy (matching your API endpoint structure)
+                node -e "
+                  const sqlite3 = require('sqlite3');
+                  const fs = require('fs');
+                  
+                  const db = new sqlite3.Database('monitor.db');
+                  db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\" ORDER BY group_name, countryCode, name', (err, rows) => {
+                    if (err) {
+                      console.error('Database error:', err);
+                      fs.writeFileSync('static-dashboard/api/group-hierarchy.json', '[]');
+                      db.close();
+                      return;
+                    }
+                    
+                    const hierarchyMap = new Map();
+                    rows.forEach(row => {
+                      const key = \`\${row.group_name}|\${row.countryCode || 'no-country'}\`;
+                      if (!hierarchyMap.has(key)) {
+                        hierarchyMap.set(key, {
+                          group_name: row.group_name,
+                          countryCode: row.countryCode || undefined,
+                          urls: []
+                        });
+                      }
+                      const entry = hierarchyMap.get(key);
+                      if (!entry.urls.find(u => u.url === row.url)) {
+                        entry.urls.push({ url: row.url, name: row.name });
+                      }
+                    });
+                    
+                    const hierarchy = Array.from(hierarchyMap.values());
+                    fs.writeFileSync('static-dashboard/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
+                    console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
+                    db.close();
+                  });
+                " || echo "Failed to generate group hierarchy"
+                
                 # Generate recent results data (more records for better charts)
-                sqlite3 -json monitoring.db "
+                sqlite3 -json monitor.db "
                   SELECT 
                     id,
                     url,
                     name,
+                    countryCode,
+                    group_name,
                     timestamp,
                     status,
                     responseTime,
@@ -148,25 +197,48 @@ jobs:
                   LIMIT 5000
                 " > static-dashboard/api/results.json
                 
+                # Generate stats data (matching your API endpoint structure)
+                sqlite3 -json monitor.db "
+                  SELECT 
+                    url,
+                    name,
+                    group_name,
+                    countryCode,
+                    COUNT(*) as totalRequests,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
+                    ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as successRate,
+                    ROUND(AVG(responseTime), 0) as averageResponseTime,
+                    MAX(timestamp) as lastChecked,
+                    (SELECT status FROM requests r2 WHERE r2.url = requests.url ORDER BY timestamp DESC LIMIT 1) as lastStatus
+                  FROM requests 
+                  WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
+                  GROUP BY url, name, group_name, countryCode
+                  ORDER BY name
+                " > static-dashboard/api/stats.json
+                
                 # Generate status codes data
-                sqlite3 -json monitoring.db "
+                sqlite3 -json monitor.db "
                   SELECT 
                     status,
                     COUNT(*) as count,
                     name,
-                    url
+                    url,
+                    group_name
                   FROM requests 
                   WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
-                  GROUP BY status, name, url
+                  GROUP BY status, name, url, group_name
                   ORDER BY status, count DESC
                 " > static-dashboard/api/status-codes.json
                 
                 # Generate failed requests data
-                sqlite3 -json monitoring.db "
+                sqlite3 -json monitor.db "
                   SELECT 
                     id,
                     url,
                     name,
+                    group_name,
+                    countryCode,
                     timestamp,
                     status,
                     responseTime,
@@ -174,9 +246,19 @@ jobs:
                   FROM requests 
                   WHERE success = 0 AND datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
                   ORDER BY timestamp DESC
+                  LIMIT 1000
                 " > static-dashboard/api/failed-requests.json
                 
                 echo "✅ Generated real API data from $RECORD_COUNT database records"
+                
+                # Show statistics about generated data
+                echo "📊 Generated API files statistics:"
+                echo "   - Groups: $(jq length static-dashboard/api/groups.json) entries"
+                echo "   - Hierarchy: $(jq length static-dashboard/api/group-hierarchy.json) groups"
+                echo "   - Results: $(jq length static-dashboard/api/results.json) records"
+                echo "   - Stats: $(jq length static-dashboard/api/stats.json) URLs"
+                echo "   - Failed requests: $(jq length static-dashboard/api/failed-requests.json) entries"
+                
               else
                 echo "📝 Database exists but no records found, using empty data"
               fi
@@ -184,12 +266,13 @@ jobs:
               echo "📝 Database exists but no tables found yet"
             fi
           else
-            echo "📝 No database found, using empty API responses"
+            echo "📝 No database found (monitor.db), using empty API responses"
           fi
           
-          # Add timestamp to dashboard
+          # Add timestamp and metadata to dashboard
           echo "<!-- Last updated: $(date -u) -->" >> static-dashboard/index.html
-          echo "<!-- Database status: $([ -f "monitoring.db" ] && echo "Found" || echo "Not found") -->" >> static-dashboard/index.html
+          echo "<!-- Database status: $([ -f "monitor.db" ] && echo "Found with $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;' 2>/dev/null || echo '0') records" || echo "Not found") -->" >> static-dashboard/index.html
+          echo "<!-- Time range: ${{ github.event.inputs.time_range_hours || '24' }} hours -->" >> static-dashboard/index.html
 
       - name: 🔍 Debug - List generated files
         run: |
@@ -199,8 +282,19 @@ jobs:
           echo "=== API Files ==="
           ls -la static-dashboard/api/
           echo ""
-          echo "=== Groups JSON Content ==="
-          cat static-dashboard/api/groups.json
+          echo "=== API File Sizes ==="
+          du -h static-dashboard/api/*
+          echo ""
+          echo "=== Groups JSON Sample ==="
+          head -20 static-dashboard/api/groups.json
+          echo ""
+          echo "=== Database File Status ==="
+          if [ -f "monitor.db" ]; then
+            echo "Database file: $(ls -lh monitor.db)"
+            echo "Record count: $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;' 2>/dev/null || echo 'Query failed')"
+          else
+            echo "No database file found"
+          fi
 
       - name: 📤 Setup Pages
         uses: actions/configure-pages@v4
@@ -221,4 +315,6 @@ jobs:
           echo "📊 **Dashboard URL:** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
           echo "🔄 **Last updated:** $(date -u)" >> $GITHUB_STEP_SUMMARY
           echo "📁 **Files deployed:** $(ls -la static-dashboard/ | wc -l) files" >> $GITHUB_STEP_SUMMARY
-          echo "💾 **Database found:** $([ -f "monitoring.db" ] && echo "Yes" || echo "No")" >> $GITHUB_STEP_SUMMARY
+          echo "💾 **Database found:** $([ -f "monitor.db" ] && echo "Yes ($(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;' 2>/dev/null || echo '0') records)" || echo "No")" >> $GITHUB_STEP_SUMMARY
+          echo "📈 **API endpoints:** $(ls static-dashboard/api/ | wc -l) files generated" >> $GITHUB_STEP_SUMMARY
+          echo "⏱️ **Time range:** ${{ github.event.inputs.time_range_hours || '24' }} hours" >> $GITHUB_STEP_SUMMARY
