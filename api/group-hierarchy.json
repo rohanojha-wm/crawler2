@@ -4,12 +4,12 @@
     "countryCode": "CA",
     "urls": [
       {
-        "url": "https://www.discoveryplus.com/ca/en",
-        "name": "Homepage"
-      },
-      {
         "url": "https://www.discoveryplus.com/ca/en/movies",
         "name": "Movie"
+      },
+      {
+        "url": "https://www.discoveryplus.com/ca/en",
+        "name": "Homepage"
       },
       {
         "url": "https://www.discoveryplus.com/ca/en/shows",
@@ -22,16 +22,38 @@
     "countryCode": "US",
     "urls": [
       {
-        "url": "https://www.discoveryplus.com",
-        "name": "Homepage"
-      },
-      {
         "url": "https://www.discoveryplus.com/movies",
         "name": "Movie"
       },
       {
         "url": "https://www.discoveryplus.com/shows",
         "name": "Show"
+      },
+      {
+        "url": "https://www.discoveryplus.com",
+        "name": "Homepage"
+      }
+    ]
+  },
+  {
+    "group_name": "Max",
+    "countryCode": "US",
+    "urls": [
+      {
+        "url": "https://www.max.com",
+        "name": "Homepage"
+      },
+      {
+        "url": "https://www.max.com/movies",
+        "name": "Movie"
+      },
+      {
+        "url": "https://www.max.com/shows",
+        "name": "Show"
+      },
+      {
+        "url": "https://www.max.com/rohan",
+        "name": "Failure"
       }
     ]
   },
@@ -49,28 +71,6 @@
       },
       {
         "url": "https://www.max.com/mx/es/shows",
-        "name": "Show"
-      }
-    ]
-  },
-  {
-    "group_name": "Max",
-    "countryCode": "US",
-    "urls": [
-      {
-        "url": "https://www.max.com/rohan",
-        "name": "Failure"
-      },
-      {
-        "url": "https://www.max.com",
-        "name": "Homepage"
-      },
-      {
-        "url": "https://www.max.com/movies",
-        "name": "Movie"
-      },
-      {
-        "url": "https://www.max.com/shows",
         "name": "Show"
       }
     ]
