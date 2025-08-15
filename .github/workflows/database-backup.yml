@@ -1,0 +1,233 @@
+name: Database Backup
+
+on:
+  # Run daily at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      backup_name:
+        description: 'Custom backup name (optional)'
+        required: false
+        type: string
+      retention_days:
+        description: 'How long to keep this backup (days)'
+        required: false
+        default: '90'
+        type: string
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  backup-database:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build TypeScript
+      run: npm run build
+    
+    - name: Install SQLite tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3
+    
+    - name: Check for existing database
+      id: db_check
+      run: |
+        if [ -f monitoring.db ]; then
+          echo "database_exists=true" >> $GITHUB_OUTPUT
+          echo "Database found - proceeding with backup"
+          
+          # Get database info
+          DB_SIZE=$(du -h monitoring.db | cut -f1)
+          RECORD_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+          OLDEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MIN(timestamp)) FROM requests;")
+          NEWEST_RECORD=$(sqlite3 monitoring.db "SELECT datetime(MAX(timestamp)) FROM requests;")
+          
+          echo "database_size=$DB_SIZE" >> $GITHUB_OUTPUT
+          echo "record_count=$RECORD_COUNT" >> $GITHUB_OUTPUT
+          echo "oldest_record=$OLDEST_RECORD" >> $GITHUB_OUTPUT
+          echo "newest_record=$NEWEST_RECORD" >> $GITHUB_OUTPUT
+        else
+          echo "database_exists=false" >> $GITHUB_OUTPUT
+          echo "No existing database found - creating sample data for backup"
+        fi
+    
+    - name: Create sample data if no database exists
+      if: steps.db_check.outputs.database_exists == 'false'
+      run: |
+        echo "Creating sample monitoring data..."
+        
+        # Ensure CSV exists
+        if [ ! -f urls.csv ]; then
+          cat > urls.csv << EOF
+        url,name,countryCode
+        https://github.com,GitHub,US
+        https://www.google.com,Google,UK
+        https://httpbin.org/status/200,HTTPBin Test,US
+        EOF
+        fi
+        
+        # Run monitoring for 1 minute to generate sample data
+        export URLS_CSV_PATH="./urls.csv"
+        export HEADLESS="true"
+        export MONITOR_TIMEOUT=60
+        export CHECK_INTERVAL=10000
+        
+        timeout 70s npm run start:headless || true
+        
+        # Verify database was created
+        if [ -f monitoring.db ]; then
+          SAMPLE_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;")
+          echo "Created sample database with $SAMPLE_COUNT records"
+        else
+          echo "Failed to create sample database"
+          exit 1
+        fi
+    
+    - name: Generate backup metadata
+      id: backup_meta
+      run: |
+        # Generate backup filename
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        if [ -n "${{ github.event.inputs.backup_name }}" ]; then
+          BACKUP_NAME="${{ github.event.inputs.backup_name }}_${TIMESTAMP}"
+        else
+          BACKUP_NAME="monitoring_backup_${TIMESTAMP}"
+        fi
+        
+        echo "backup_name=$BACKUP_NAME" >> $GITHUB_OUTPUT
+        echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+        
+        # Create backup directory
+        mkdir -p backup
+    
+    - name: Create database backup
+      run: |
+        echo "Creating database backup: ${{ steps.backup_meta.outputs.backup_name }}"
+        
+        # Create SQLite backup (more reliable than file copy)
+        sqlite3 monitoring.db ".backup backup/${{ steps.backup_meta.outputs.backup_name }}.db"
+        
+        # Create SQL dump as additional backup format
+        sqlite3 monitoring.db ".dump" > "backup/${{ steps.backup_meta.outputs.backup_name }}.sql"
+        
+        # Compress the backup files
+        cd backup
+        tar -czf "${{ steps.backup_meta.outputs.backup_name }}.tar.gz" \
+          "${{ steps.backup_meta.outputs.backup_name }}.db" \
+          "${{ steps.backup_meta.outputs.backup_name }}.sql"
+        
+        # Remove individual files, keep only the compressed archive
+        rm "${{ steps.backup_meta.outputs.backup_name }}.db" "${{ steps.backup_meta.outputs.backup_name }}.sql"
+        
+        cd ..
+        
+        echo "Backup created successfully"
+        ls -la backup/
+    
+    - name: Generate backup report
+      run: |
+        echo "# Database Backup Report" > backup-report.md
+        echo "**Generated:** $(date)" >> backup-report.md
+        echo "**Backup Name:** ${{ steps.backup_meta.outputs.backup_name }}" >> backup-report.md
+        echo "" >> backup-report.md
+        
+        if [ "${{ steps.db_check.outputs.database_exists }}" == "true" ]; then
+          echo "## Database Statistics" >> backup-report.md
+          echo "- **Database Size:** ${{ steps.db_check.outputs.database_size }}" >> backup-report.md
+          echo "- **Total Records:** ${{ steps.db_check.outputs.record_count }}" >> backup-report.md
+          echo "- **Date Range:** ${{ steps.db_check.outputs.oldest_record }} to ${{ steps.db_check.outputs.newest_record }}" >> backup-report.md
+        else
+          echo "## Sample Data Created" >> backup-report.md
+          echo "No existing database found. Created sample monitoring data for backup." >> backup-report.md
+          SAMPLE_COUNT=$(sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+          echo "- **Sample Records:** $SAMPLE_COUNT" >> backup-report.md
+        fi
+        
+        echo "" >> backup-report.md
+        echo "## Backup Details" >> backup-report.md
+        BACKUP_SIZE=$(du -h backup/${{ steps.backup_meta.outputs.backup_name }}.tar.gz | cut -f1)
+        echo "- **Backup File:** ${{ steps.backup_meta.outputs.backup_name }}.tar.gz" >> backup-report.md
+        echo "- **Compressed Size:** $BACKUP_SIZE" >> backup-report.md
+        echo "- **Backup Format:** SQLite database + SQL dump (compressed)" >> backup-report.md
+        echo "- **Retention:** ${{ github.event.inputs.retention_days || '90' }} days" >> backup-report.md
+        
+        echo "" >> backup-report.md
+        echo "## Recent Monitoring Activity" >> backup-report.md
+        echo "" >> backup-report.md
+        
+        if sqlite3 monitoring.db "SELECT COUNT(*) FROM requests;" > /dev/null 2>&1; then
+          echo "### URLs Monitored" >> backup-report.md
+          echo "" >> backup-report.md
+          echo "| URL Name | Latest Status | Last Check | Success Rate |" >> backup-report.md
+          echo "|----------|---------------|------------|--------------|" >> backup-report.md
+          
+          sqlite3 monitoring.db -separator "|" \
+            "SELECT 
+               name,
+               CASE WHEN latest.success = 1 THEN '✅ UP' ELSE '❌ DOWN' END as status,
+               datetime(latest.timestamp) as last_check,
+               ROUND(AVG(CASE WHEN r.success = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) || '%' as success_rate
+             FROM requests r
+             INNER JOIN (
+               SELECT name, MAX(timestamp) as max_time
+               FROM requests 
+               GROUP BY name
+             ) latest_time ON r.name = latest_time.name
+             INNER JOIN requests latest ON latest.name = r.name AND latest.timestamp = latest_time.max_time
+             GROUP BY r.name, latest.success, latest.timestamp
+             ORDER BY latest.timestamp DESC;" | \
+          while IFS='|' read -r name status last_check success_rate; do
+            echo "| $name | $status | $last_check | $success_rate |" >> backup-report.md
+          done 2>/dev/null || echo "No monitoring data available" >> backup-report.md
+        else
+          echo "No monitoring data available in backup." >> backup-report.md
+        fi
+        
+        echo "" >> backup-report.md
+        echo "---" >> backup-report.md
+        echo "*This backup was created automatically by the Database Backup workflow.*" >> backup-report.md
+        
+        cat backup-report.md
+    
+    - name: Upload backup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.backup_meta.outputs.backup_name }}
+        path: |
+          backup/${{ steps.backup_meta.outputs.backup_name }}.tar.gz
+          backup-report.md
+          monitoring.db
+        retention-days: ${{ github.event.inputs.retention_days || 90 }}
+    
+    - name: Clean up old backups (local)
+      run: |
+        echo "Cleaning up local backup files..."
+        rm -rf backup/
+        echo "Local cleanup completed"
+    
+    - name: Summary
+      run: |
+        echo "🎉 Database backup completed successfully!"
+        echo "📦 Backup Name: ${{ steps.backup_meta.outputs.backup_name }}"
+        echo "📅 Retention: ${{ github.event.inputs.retention_days || 90 }} days"
+        echo "💾 Database Records: ${{ steps.db_check.outputs.record_count || 'Sample data' }}"
+        echo ""
+        echo "The backup has been uploaded as a GitHub Actions artifact and will be"
+        echo "available for download from the Actions tab for the specified retention period."
