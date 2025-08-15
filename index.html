@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Monitor Dashboard</title>
+    <meta name="description" content="Real-time URL monitoring dashboard with response times and status tracking">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>📊</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        .refresh-btn {
+            background: linear-gradient(45deg, #28a745, #20c997);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .success { color: #28a745; }
+        .warning { color: #ffc107; }
+        .danger { color: #dc3545; }
+        .info { color: #17a2b8; }
+
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+        }
+
+        .chart-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .chart-card h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+        }
+
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .group-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 25px;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        .group-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(31, 38, 135, 0.4);
+        }
+
+        .group-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .group-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            text-align: center;
+        }
+
+        .group-stat {
+            padding: 10px;
+        }
+
+        .group-stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .group-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 5px;
+        }
+
+        .back-btn {
+            background: linear-gradient(45deg, #6c757d, #495057);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .nav-buttons {
+                justify-content: center;
+            }
+            
+            .groups-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 URL Monitor Dashboard</h1>
+            <p>Real-time monitoring of website availability and performance</p>
+            <div class="nav-buttons">
+                <button class="nav-btn refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
+                <a href="failed-requests.html" class="nav-btn" style="text-decoration: none; display: inline-block;">🚨 Failed Requests</a>
+                <select id="timeRangeSelector" class="nav-btn" style="background: linear-gradient(45deg, #ff6b6b, #ee5a6f); border: none; color: white;" onchange="changeTimeRange()">
+                    <option value="1">⏰ Last 1 Hour</option>
+                    <option value="6">⏰ Last 6 Hours</option>
+                    <option value="12">⏰ Last 12 Hours</option>
+                    <option value="24" selected>⏰ Last 24 Hours</option>
+                    <option value="48">⏰ Last 48 Hours</option>
+                    <option value="72">⏰ Last 3 Days</option>
+                    <option value="168">⏰ Last 7 Days</option>
+                </select>
+                <span id="modeIndicator" class="nav-btn" style="background: linear-gradient(45deg, #17a2b8, #20c997); cursor: default;">
+                    📡 Detecting mode...
+                </span>
+                <span id="lastUpdated" class="nav-btn" style="background: linear-gradient(45deg, #6c757d, #495057); cursor: default;">
+                    🕒 Loading...
+                </span>
+            </div>
+        </div>
+
+        <div id="drilldownContainer">
+            <div id="drilldownNav" style="margin-bottom: 20px; display: none;"></div>
+            <div id="drilldownGrid" class="groups-grid">
+                <div class="loading">Loading group hierarchy...</div>
+            </div>
+        </div>
+
+        <div class="charts-container">
+            <div class="chart-card">
+                <h3>📊 Response Times by Group (Last 24 Hours)</h3>
+                <div class="chart-container">
+                    <canvas id="responseTimeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <h3>🚦 Status Code Distribution (Last 24 Hours)</h3>
+                <div class="chart-container">
+                    <canvas id="statusCodeChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+let responseTimeChart;
+let statusCodeChart;
+let drilldownState = { group: null, countryCode: null };
+let groupHierarchy = [];
+let timeRangeHours = 24; // Default 24 hours, configurable
+
+const isStaticMode = window.location.hostname.includes('github.io') || 
+                   window.location.protocol === 'file:';
+
+console.log('Static mode detected:', isStaticMode, 'hostname:', window.location.hostname, 'protocol:', window.location.protocol, 'port:', window.location.port);
+
+function updateTimestamp() {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { 
+        hour12: false, 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit' 
+    });
+    const dateString = now.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: '2-digit' 
+    });
+    document.getElementById('lastUpdated').innerHTML = `🕒 Updated: ${dateString} ${timeString}`;
+}
+
+async function fetchWithFallback(apiPath, staticFile) {
+    try {
+        if (!isStaticMode) {
+            const response = await fetch(apiPath);
+            if (response.ok) {
+                return await response.json();
+            }
+        }
+        const cacheBuster = Date.now();
+        const response = await fetch(`${staticFile}?v=${cacheBuster}`);
+        if (response.ok) {
+            return await response.json();
+        }
+        return [];
+    } catch (error) {
+        console.error(`Error fetching data from ${apiPath} or ${staticFile}:`, error);
+        return [];
+    }
+}
+
+async function fetchGroupHierarchy() {
+    const response = await fetch('/api/group-hierarchy');
+    if (response.ok) {
+        groupHierarchy = await response.json();
+        return groupHierarchy;
+    }
+    return [];
+}
+
+async function fetchResults(timeRange = '-24 hours', groupName = null) {
+    try {
+        let results;
+        if (isStaticMode) {
+            const cacheBuster = Date.now();
+            const response = await fetch(`./api/results.json?v=${cacheBuster}`);
+            if (response.ok) {
+                const allResults = await response.json();
+                const now = new Date();
+                const timeFilterMs = timeRangeHours * 60 * 60 * 1000;
+                const cutoffTime = new Date(now.getTime() - timeFilterMs);
+                results = allResults.filter(result => {
+                    const resultTime = new Date(result.timestamp);
+                    return resultTime >= cutoffTime;
+                });
+            } else {
+                results = [];
+            }
+        } else {
+            let apiUrl = `/api/results?timeRange=${encodeURIComponent(timeRange)}`;
+            if (groupName) {
+                apiUrl += `&group=${encodeURIComponent(groupName)}`;
+            }
+            const response = await fetch(apiUrl);
+            if (response.ok) {
+                results = await response.json();
+            } else {
+                results = [];
+            }
+        }
+        return results;
+    } catch (error) {
+        console.error('Error in fetchResults:', error);
+        return [];
+    }
+}
+
+function getStatusText(status) {
+    if (status >= 200 && status < 300) return 'Success';
+    if (status >= 300 && status < 400) return 'Redirect';
+    if (status >= 400 && status < 500) return 'Client Error';
+    if (status >= 500) return 'Server Error';
+    return 'Unknown';
+}
+
+function renderDrilldown() {
+    const nav = document.getElementById('drilldownNav');
+    const grid = document.getElementById('drilldownGrid');
+    let navHtml = '';
+    if (drilldownState.group) {
+        navHtml += `<button class="back-btn" onclick="drilldownBack('group')">⬅️ Back to Groups</button> `;
+        navHtml += `<span style="font-weight:600;">${drilldownState.group}</span>`;
+    }
+    if (drilldownState.countryCode) {
+        navHtml += ` &raquo; <button class="back-btn" onclick="drilldownBack('countryCode')">⬅️ Back to Countries</button> <span style="font-weight:600;">${drilldownState.countryCode}</span>`;
+    }
+    nav.style.display = navHtml ? 'block' : 'none';
+    nav.innerHTML = navHtml;
+
+    if (!drilldownState.group) {
+        const groups = [...new Set(groupHierarchy.map(g => g.group_name))];
+        fetchResults('-24 hours').then(results => {
+            grid.innerHTML = groups.map(group => {
+                const groupResults = results.filter(r => r.group_name === group);
+                const total = groupResults.length;
+                const failed = groupResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                const success = groupResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                const successRate = total > 0 ? (success / total) * 100 : 0;
+                return `<div class="group-card" onclick="drilldownSelect('group','${group}')"><h3>${group}</h3>
+                    <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                    <small>Success Rate</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value'>${total}</div>
+                    <small>Total Requests</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value danger'>${failed}</div>
+                    <small>Failed Requests</small>
+                </div>`;
+            }).join('');
+        });
+        updateChartsForDrilldown();
+    } else if (!drilldownState.countryCode) {
+        const countries = groupHierarchy.filter(g => g.group_name === drilldownState.group).map(g => g.countryCode);
+        fetchResults('-24 hours').then(results => {
+            grid.innerHTML = countries.map(cc => {
+                const ccResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === cc);
+                const total = ccResults.length;
+                const failed = ccResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                const success = ccResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                const successRate = total > 0 ? (success / total) * 100 : 0;
+                return `<div class="group-card" onclick="drilldownSelect('countryCode','${cc}')"><h3>${cc}</h3>
+                    <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                    <small>Success Rate</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value'>${total}</div>
+                    <small>Total Requests</small>
+                    <hr style='margin: 10px 0;'>
+                    <div class='stat-value danger'>${failed}</div>
+                    <small>Failed Requests</small>
+                </div>`;
+            }).join('');
+        });
+        updateChartsForDrilldown(drilldownState.group);
+    } else {
+        const urls = groupHierarchy.find(g => g.group_name === drilldownState.group && g.countryCode === drilldownState.countryCode)?.urls || [];
+        if (urls.length === 0) {
+            grid.innerHTML = '<div class="loading">No URLs found in this group/country.</div>';
+        } else {
+            fetchResults('-24 hours').then(results => {
+                grid.innerHTML = urls.map(url => {
+                    const urlResults = results.filter(r => r.group_name === drilldownState.group && r.countryCode === drilldownState.countryCode && r.url === url.url);
+                    const total = urlResults.length;
+                    const failed = urlResults.filter(r => !r.success && (!r.status || r.status < 200 || r.status >= 300)).length;
+                    const success = urlResults.filter(r => r.success || (r.status >= 200 && r.status < 300)).length;
+                    const successRate = total > 0 ? (success / total) * 100 : 0;
+                    return `<div class="stat-card"><h3>${url.name}</h3><small style='color:#666;font-size:12px;'>${url.url}</small>
+                        <div class='stat-value ${successRate >= 95 ? 'success' : (successRate >= 80 ? 'warning' : 'danger')}'>${successRate.toFixed(1)}%</div>
+                        <small>Success Rate</small>
+                        <hr style='margin: 10px 0;'>
+                        <div class='stat-value'>${total}</div>
+                        <small>Total Requests</small>
+                        <hr style='margin: 10px 0;'>
+                        <div class='stat-value danger'>${failed}</div>
+                        <small>Failed Requests</small>
+                    </div>`;
+                }).join('');
+            });
+        }
+        updateChartsForDrilldown(drilldownState.group, drilldownState.countryCode);
+    }
+}
+
+function drilldownSelect(level, value) {
+    if (level === 'group') {
+        drilldownState.group = value;
+        drilldownState.countryCode = null;
+    } else if (level === 'countryCode') {
+        drilldownState.countryCode = value;
+    }
+    renderDrilldown();
+}
+
+function drilldownBack(level) {
+    if (level === 'group') {
+        drilldownState.group = null;
+        drilldownState.countryCode = null;
+    } else if (level === 'countryCode') {
+        drilldownState.countryCode = null;
+    }
+    renderDrilldown();
+}
+
+function updateChartsForDrilldown(group = null, countryCode = null, url = null) {
+    fetchResults('-24 hours').then(results => {
+        let filtered = results;
+        if (group) filtered = filtered.filter(r => r.group_name === group);
+        if (countryCode) filtered = filtered.filter(r => r.countryCode === countryCode);
+        if (url) filtered = filtered.filter(r => r.url === url);
+        createResponseTimeChartWithData(filtered);
+        createStatusCodeChartWithData(filtered);
+    });
+}
+
+function createResponseTimeChartWithData(results) {
+    const ctx = document.getElementById('responseTimeChart').getContext('2d');
+    if (responseTimeChart) responseTimeChart.destroy();
+    if (!results || results.length === 0) {
+        ctx.fillText('No data available', 10, 50);
+        return;
+    }
+    const groupedData = {};
+    let minTime = null, maxTime = null;
+    results.forEach(result => {
+        if (!result.name || !result.timestamp || result.responseTime === undefined) return;
+        if (!groupedData[result.name]) groupedData[result.name] = [];
+        const timestamp = new Date(result.timestamp);
+        if (isNaN(timestamp.getTime())) return;
+        groupedData[result.name].push({ x: timestamp, y: result.responseTime || 0 });
+        if (!minTime || timestamp < minTime) minTime = timestamp;
+        if (!maxTime || timestamp > maxTime) maxTime = timestamp;
+    });
+    let unit = 'hour';
+    if (minTime && maxTime) {
+        const diffMs = maxTime - minTime;
+        const diffHours = diffMs / (1000 * 60 * 60);
+        if (diffHours < 2) unit = 'minute';
+        else if (diffHours < 48) unit = 'hour';
+        else unit = 'day';
+    }
+    const datasets = Object.keys(groupedData).map((name, index) => ({
+        label: name,
+        data: groupedData[name],
+        borderColor: `hsl(${index * 60}, 70%, 50%)`,
+        backgroundColor: `hsla(${index * 60}, 70%, 50%, 0.1)`,
+        tension: 0.4,
+        pointRadius: 3,
+        pointHoverRadius: 6
+    }));
+    responseTimeChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit,
+                        displayFormats: { minute: 'MMM dd HH:mm', hour: 'MMM dd HH:mm', day: 'MMM dd' }
+                    },
+                    title: { display: true, text: 'Time' }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Response Time (ms)' }
+                }
+            },
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'Response Time' }
+            }
+        }
+    });
+}
+
+function createStatusCodeChartWithData(results) {
+    const ctx = document.getElementById('statusCodeChart').getContext('2d');
+    if (statusCodeChart) statusCodeChart.destroy();
+    if (!results || results.length === 0) {
+        ctx.fillText('No data available', 10, 50);
+        return;
+    }
+    const urlStatusCounts = {};
+    const statusCodesSet = new Set();
+    results.forEach(result => {
+        if (!result.name || !result.status) return;
+        if (!urlStatusCounts[result.name]) urlStatusCounts[result.name] = {};
+        urlStatusCounts[result.name][result.status] = (urlStatusCounts[result.name][result.status] || 0) + 1;
+        statusCodesSet.add(result.status);
+    });
+    const urls = Object.keys(urlStatusCounts);
+    const statusCodes = Array.from(statusCodesSet).sort((a, b) => a - b);
+    const datasets = statusCodes.map((status, idx) => ({
+        label: `${status} (${getStatusText(status)})`,
+        data: urls.map(url => urlStatusCounts[url][status] || 0),
+        backgroundColor: `hsl(${idx * 60}, 70%, 60%)`,
+        stack: 'status',
+    }));
+    statusCodeChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: urls, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Status Code Distribution'
+                },
+                legend: { display: true, position: 'top' },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { stacked: true, title: { display: true, text: 'URL' } },
+                y: { stacked: true, title: { display: true, text: 'Count' }, beginAtZero: true }
+            }
+        }
+    });
+}
+
+function changeTimeRange() {
+    const selector = document.getElementById('timeRangeSelector');
+    timeRangeHours = parseInt(selector.value);
+    const responseChartTitle = document.querySelector('.charts-container .chart-card:first-child h3');
+    const statusChartTitle = document.querySelector('.charts-container .chart-card:last-child h3');
+    const timeTextMap = {
+        1: '1 Hour',
+        6: '6 Hours', 
+        12: '12 Hours',
+        24: '24 Hours',
+        48: '48 Hours',
+        72: '3 Days',
+        168: '7 Days'
+    };
+    const timeText = timeTextMap[timeRangeHours] || `${timeRangeHours} Hours`;
+    responseChartTitle.textContent = `📊 Response Times by Group (Last ${timeText})`;
+    statusChartTitle.textContent = `🚦 Status Code Distribution (Last ${timeText})`;
+    refreshData();
+}
+
+async function refreshData() {
+    try {
+        updateTimestamp();
+        await fetchGroupHierarchy();
+        renderDrilldown();
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+    }
+}
+
+async function initialize() {
+    const modeIndicator = document.getElementById('modeIndicator');
+    if (isStaticMode) {
+        modeIndicator.innerHTML = '🌐 Static Mode (GitHub Pages)';
+        modeIndicator.style.background = 'linear-gradient(45deg, #6f42c1, #e83e8c)';
+        modeIndicator.title = 'Running on GitHub Pages with data refreshed every 15 minutes';
+    } else {
+        modeIndicator.innerHTML = '⚡ Live Mode';
+        modeIndicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+        modeIndicator.title = 'Connected to live API with real-time data';
+    }
+    updateTimestamp();
+    await fetchGroupHierarchy();
+    renderDrilldown();
+}
+
+initialize();
+const refreshInterval = isStaticMode ? 60000 : 30000;
+setInterval(refreshData, refreshInterval);
+</script>
+</body>
+</html>

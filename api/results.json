@@ -1,0 +1,13 @@
+[{"id":13,"url":"https://www.max.com/mx/es/shows","name":"Show","countryCode":"MX","group_name":"Max","timestamp":"2025-08-15T16:35:16.657Z","status":200,"responseTime":931,"success":1,"error":null},
+{"id":12,"url":"https://www.discoveryplus.com/ca/en/shows","name":"Show","countryCode":"CA","group_name":"D+","timestamp":"2025-08-15T16:35:16.417Z","status":200,"responseTime":687,"success":1,"error":null},
+{"id":11,"url":"https://www.discoveryplus.com/ca/en/movies","name":"Movie","countryCode":"CA","group_name":"D+","timestamp":"2025-08-15T16:35:16.381Z","status":200,"responseTime":650,"success":1,"error":null},
+{"id":10,"url":"https://www.discoveryplus.com/movies","name":"Movie","countryCode":"US","group_name":"D+","timestamp":"2025-08-15T16:35:16.352Z","status":200,"responseTime":628,"success":1,"error":null},
+{"id":9,"url":"https://www.discoveryplus.com/ca/en","name":"Homepage","countryCode":"CA","group_name":"D+","timestamp":"2025-08-15T16:35:16.340Z","status":200,"responseTime":612,"success":1,"error":null},
+{"id":8,"url":"https://www.max.com/rohan","name":"Failure","countryCode":"US","group_name":"Max","timestamp":"2025-08-15T16:35:16.300Z","status":404,"responseTime":580,"success":0,"error":"HTTP 404"},
+{"id":7,"url":"https://www.max.com/mx/es","name":"Homepage","countryCode":"MX","group_name":"Max","timestamp":"2025-08-15T16:35:16.297Z","status":200,"responseTime":572,"success":1,"error":null},
+{"id":6,"url":"https://www.max.com/movies","name":"Movie","countryCode":"US","group_name":"Max","timestamp":"2025-08-15T16:35:16.230Z","status":200,"responseTime":511,"success":1,"error":null},
+{"id":5,"url":"https://www.max.com/movies","name":"Movie","countryCode":"MX","group_name":"Max","timestamp":"2025-08-15T16:35:16.222Z","status":200,"responseTime":495,"success":1,"error":null},
+{"id":4,"url":"https://www.max.com/shows","name":"Show","countryCode":"US","group_name":"Max","timestamp":"2025-08-15T16:35:16.120Z","status":200,"responseTime":403,"success":1,"error":null},
+{"id":3,"url":"https://www.max.com","name":"Homepage","countryCode":"US","group_name":"Max","timestamp":"2025-08-15T16:35:16.099Z","status":200,"responseTime":436,"success":1,"error":null},
+{"id":2,"url":"https://www.discoveryplus.com/shows","name":"Show","countryCode":"US","group_name":"D+","timestamp":"2025-08-15T16:35:16.070Z","status":200,"responseTime":347,"success":1,"error":null},
+{"id":1,"url":"https://www.discoveryplus.com","name":"Homepage","countryCode":"US","group_name":"D+","timestamp":"2025-08-15T16:35:16.006Z","status":200,"responseTime":284,"success":1,"error":null}]
