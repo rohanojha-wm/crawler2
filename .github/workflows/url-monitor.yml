@@ -1,59 +1,61 @@
-name: URL Monitor
+name: URL Monitor & Dashboard Deploy
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes
+    - cron: '*/15 * * * *'  # Every 15 minutes following your project requirements
   workflow_dispatch:
     inputs:
       force_run:
         description: 'Force monitoring run'
         required: false
         default: 'false'
+      time_range_hours:
+        description: 'Hours of data for dashboard (default: 24)'
+        required: false
+        default: '24'
 
 permissions:
   contents: write
   pages: write
   id-token: write
 
+concurrency:
+  group: "url-monitor"
+  cancel-in-progress: false
+
 jobs:
-  monitor:
+  monitor-and-deploy:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
+    - name: 📥 Checkout repository
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Setup Node.js
+    - name: 🔧 Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
 
-    - name: Install dependencies
+    - name: 📦 Install dependencies
       run: npm ci
 
-    - name: Build TypeScript
+    - name: 🏗️ Build TypeScript
       run: npm run build
 
-    - name: Check for existing database artifact
-      run: |
-        echo "🔍 Checking for existing database artifact..."
-        # This step always succeeds - we handle missing artifacts gracefully
-
-    - name: Download existing database (graceful failure)
+    - name: 📊 Download existing database (graceful failure)
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
-        name: monitor-database-artifact
+        name: monitor-database-persistent
         path: ./
 
-    - name: Initialize database if needed
+    - name: 🗄️ Initialize database following your schema
       run: |
         if [ ! -f "monitor.db" ]; then
-          echo "🆕 Creating fresh database file..."
-          # Create database with proper schema following your database.ts structure
+          echo "🆕 Creating fresh database with your SQLite schema..."
           sqlite3 monitor.db "
             CREATE TABLE IF NOT EXISTS requests (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,89 +72,124 @@ jobs:
             CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp);
             CREATE INDEX IF NOT EXISTS idx_requests_url ON requests(url);
             CREATE INDEX IF NOT EXISTS idx_requests_group_name ON requests(group_name);
+            CREATE INDEX IF NOT EXISTS idx_requests_country ON requests(countryCode);
           "
-          echo "✅ Fresh database initialized"
+          echo "✅ Fresh database initialized with your project schema"
         else
-          echo "📊 Using existing database"
+          echo "📊 Found existing database"
           RECORD_COUNT=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "Existing records: $RECORD_COUNT"
+          echo "Current records: $RECORD_COUNT"
         fi
 
-    - name: Verify urls.csv exists
+    - name: 📋 Verify CSV configuration
       run: |
         if [ ! -f "urls.csv" ]; then
-          echo "⚠️ urls.csv not found, creating sample file"
+          echo "⚠️ urls.csv not found, creating sample following your CSV format"
           cat > urls.csv << 'EOF'
         url,name,countryCode,group_name
-        https://httpstat.us/200,HTTP Status 200,US,Test Group
-        https://httpstat.us/404,HTTP Status 404,US,Test Group
-        https://httpbin.org/delay/1,HTTPBin Delay,GB,Network Tests
+        https://httpstat.us/200,HTTP Status 200,US,Test APIs
+        https://httpstat.us/404,HTTP Status 404,US,Test APIs
+        https://httpbin.org/delay/1,HTTPBin Delay Test,GB,Network Tests
+        https://httpbin.org/status/500,Server Error Test,DE,Error Tests
+        https://www.google.com,Google Homepage,US,Production Sites
         EOF
+          echo "✅ Created sample urls.csv with your recommended format"
         else
           echo "✅ urls.csv found"
-          echo "URLs to monitor:"
-          cat urls.csv | head -10
+          echo "URLs configured for monitoring:"
+          head -5 urls.csv
         fi
 
-    - name: Run headless URL monitoring
+    - name: 🔄 Run headless URL monitoring
       env:
         URLS_CSV_PATH: urls.csv
         MONITOR_TIMEOUT: 30000
         DATABASE_PATH: monitor.db
       run: |
-        echo "🔄 Starting URL monitoring cycle..."
+        echo "🔄 Starting URL monitoring cycle following your headless pattern..."
         npm run headless
 
-    - name: Verify monitoring results
+    - name: 📈 Verify monitoring results
       run: |
         if [ -f "monitor.db" ]; then
-          echo "📈 Monitoring completed successfully"
+          echo "✅ Monitoring completed successfully"
           
-          # Database statistics
+          # Statistics following your database schema
           TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
-          echo "Total database records: $TOTAL_RECORDS"
+          RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
           
-          # Recent results (following your database schema)
-          echo "Recent monitoring results:"
+          echo "📊 Database Statistics:"
+          echo "   Total records: $TOTAL_RECORDS"
+          echo "   Records this hour: $RECENT_RECORDS"
+          
+          # Show recent results following your API structure
+          echo "🔍 Recent monitoring results:"
           sqlite3 monitor.db "
             SELECT 
               name, 
               status, 
               responseTime || 'ms' as response_time,
               CASE WHEN success = 1 THEN '✅' ELSE '❌' END as result,
+              group_name,
               datetime(timestamp, 'localtime') as checked_at
             FROM requests 
             ORDER BY timestamp DESC 
-            LIMIT 5;
-          " 2>/dev/null || echo "No results to display"
+            LIMIT 8;
+          " 2>/dev/null || echo "No results to display yet"
+          
+          # Success rate statistics
+          echo "📈 Success rates by group:"
+          sqlite3 monitor.db "
+            SELECT 
+              COALESCE(group_name, 'Ungrouped') as group_name,
+              COUNT(*) as total_checks,
+              ROUND(AVG(CASE WHEN success = 1 THEN 100.0 ELSE 0.0 END), 1) || '%' as success_rate,
+              ROUND(AVG(responseTime), 0) || 'ms' as avg_response_time
+            FROM requests 
+            WHERE datetime(timestamp) >= datetime('now', '-24 hours')
+            GROUP BY group_name
+            ORDER BY group_name;
+          " 2>/dev/null || echo "No group statistics available yet"
           
         else
           echo "❌ Database file not found after monitoring"
           exit 1
         fi
 
-    - name: Always upload database artifact
+    - name: 💾 Upload database for persistence
       uses: actions/upload-artifact@v4
       with:
-        name: monitor-database-artifact
+        name: monitor-database-persistent
         path: monitor.db
         retention-days: 30
         compression-level: 6
         if-no-files-found: error
 
-    - name: Generate static API files for GitHub Pages
+    - name: 📄 Generate static API files following your endpoints
       run: |
-        echo "📄 Generating static API files following your API endpoints..."
-        mkdir -p public/api
+        echo "📄 Generating static API files for your dashboard..."
+        mkdir -p dashboard/api
         
-        # Generate results.json (matching GET /api/results endpoint)
+        # Copy your public directory for dashboard
+        cp -r public/* dashboard/ 2>/dev/null || mkdir -p dashboard
+        
+        TIME_RANGE="${{ github.event.inputs.time_range_hours || '24' }}"
+        echo "⏱️ Using time range: $TIME_RANGE hours"
+        
+        # Generate results.json matching your GET /api/results endpoint
+        echo "Generating results.json..."
         sqlite3 monitor.db -json "
-          SELECT * FROM requests 
-          WHERE datetime(timestamp) >= datetime('now', '-7 days') 
-          ORDER BY timestamp DESC;
-        " > public/api/results.json 2>/dev/null || echo "[]" > public/api/results.json
+          SELECT 
+            id, url, name, countryCode, group_name, timestamp, 
+            status, responseTime, success, error
+          FROM requests 
+          WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours') 
+          ORDER BY timestamp DESC
+          LIMIT 5000;
+        " > dashboard/api/results.json 2>/dev/null || echo "[]" > dashboard/api/results.json
         
-        # Generate stats.json (matching GET /api/stats endpoint)
+        # Generate stats.json matching your GET /api/stats endpoint
+        echo "Generating stats.json..."
         sqlite3 monitor.db -json "
           SELECT 
             url, name, group_name, countryCode,
@@ -161,23 +198,26 @@ jobs:
             SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRequests,
             ROUND(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as successRate,
             ROUND(AVG(responseTime), 0) as averageResponseTime,
-            MAX(timestamp) as lastChecked
+            MAX(timestamp) as lastChecked,
+            (SELECT status FROM requests r2 WHERE r2.url = requests.url ORDER BY timestamp DESC LIMIT 1) as lastStatus
           FROM requests 
-          WHERE datetime(timestamp) >= datetime('now', '-24 hours')
+          WHERE datetime(timestamp) >= datetime('now', '-$TIME_RANGE hours')
           GROUP BY url, name, group_name, countryCode
           ORDER BY name;
-        " > public/api/stats.json 2>/dev/null || echo "[]" > public/api/stats.json
+        " > dashboard/api/stats.json 2>/dev/null || echo "[]" > dashboard/api/stats.json
         
-        # Generate group-hierarchy.json for dashboard drilldown
+        # Generate group-hierarchy.json following your project structure
+        echo "Generating group-hierarchy.json..."
         node -e "
           const sqlite3 = require('sqlite3');
           const fs = require('fs');
           
           try {
             const db = new sqlite3.Database('monitor.db');
-            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\"', (err, rows) => {
-              if (err || !rows) {
-                fs.writeFileSync('public/api/group-hierarchy.json', '[]');
+            db.all('SELECT DISTINCT group_name, countryCode, url, name FROM requests WHERE group_name IS NOT NULL AND group_name != \"\" ORDER BY group_name, countryCode, name', (err, rows) => {
+              if (err || !rows || rows.length === 0) {
+                console.log('No group data found, creating empty hierarchy');
+                fs.writeFileSync('dashboard/api/group-hierarchy.json', '[]');
                 db.close();
                 return;
               }
@@ -199,32 +239,57 @@ jobs:
               });
               
               const hierarchy = Array.from(hierarchyMap.values());
-              fs.writeFileSync('public/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
+              fs.writeFileSync('dashboard/api/group-hierarchy.json', JSON.stringify(hierarchy, null, 2));
               console.log(\`Generated hierarchy with \${hierarchy.length} groups\`);
               db.close();
             });
           } catch (error) {
             console.error('Error generating hierarchy:', error);
-            require('fs').writeFileSync('public/api/group-hierarchy.json', '[]');
+            require('fs').writeFileSync('dashboard/api/group-hierarchy.json', '[]');
           }
-        " || echo "[]" > public/api/group-hierarchy.json
+        " || echo "[]" > dashboard/api/group-hierarchy.json
         
-        echo "✅ Static API files generated"
-        echo "File sizes:"
-        ls -lh public/api/
+        # Add metadata to dashboard
+        cat >> dashboard/index.html << EOF
+        <!-- Generated: $(date -u) -->
+        <!-- Records: $(sqlite3 monitor.db 'SELECT COUNT(*) FROM requests;' 2>/dev/null || echo '0') -->
+        <!-- Time range: $TIME_RANGE hours -->
+        <!-- Monitor run: ${{ github.run_number }} -->
+        EOF
+        
+        echo "✅ Generated static API files"
+        echo "📊 File statistics:"
+        echo "   Results: $(jq length dashboard/api/results.json 2>/dev/null || echo '0') entries"
+        echo "   Stats: $(jq length dashboard/api/stats.json 2>/dev/null || echo '0') URLs"
+        echo "   Groups: $(jq length dashboard/api/group-hierarchy.json 2>/dev/null || echo '0') hierarchies"
 
-    - name: Deploy to GitHub Pages
+    - name: 🌐 Deploy dashboard to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./public
+        publish_dir: ./dashboard
         enable_jekyll: false
         user_name: 'github-actions[bot]'
         user_email: 'github-actions[bot]@users.noreply.github.com'
+        commit_message: 'Update monitoring dashboard - Run ${{ github.run_number }}'
 
-    - name: Monitoring summary
+    - name: 🎉 Monitoring cycle summary
       run: |
-        echo "🎉 URL monitoring cycle completed!"
-        echo "📊 Database: $(ls -lh monitor.db | awk '{print $5}')"
-        echo "📁 API files: $(ls public/api/ | wc -l) generated"
-        echo "🔄 Next run: $(date -d '+15 minutes' -u '+%Y-%m-%d %H:%M UTC')"
+        echo "🎉 URL monitoring and dashboard deployment completed!"
+        echo ""
+        echo "📊 Summary:"
+        TOTAL_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "0")
+        RECENT_RECORDS=$(sqlite3 monitor.db "SELECT COUNT(*) FROM requests WHERE datetime(timestamp) >= datetime('now', '-1 hour');" 2>/dev/null || echo "0")
+        
+        echo "   - Total database records: $TOTAL_RECORDS"
+        echo "   - Records added this hour: $RECENT_RECORDS"
+        echo "   - Database size: $(ls -lh monitor.db | awk '{print $5}' 2>/dev/null || echo 'Unknown')"
+        echo "   - API files deployed: $(ls dashboard/api/ 2>/dev/null | wc -l) files"
+        echo ""
+        echo "🌐 Dashboard URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+        echo "⏰ Next monitoring cycle: $(date -d '+15 minutes' -u '+%Y-%m-%d %H:%M UTC')"
+        echo ""
+        echo "🔗 API Endpoints (static):"
+        echo "   - Results: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/results.json"
+        echo "   - Stats: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/stats.json"
+        echo "   - Groups: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/api/group-hierarchy.json"
