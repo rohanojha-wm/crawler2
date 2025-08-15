@@ -1,10 +1,10 @@
 {
-  "generated": "Fri Aug 15 20:52:33 UTC 2025",
-  "totalRecords": 225,
-  "recentRecords": 225,
-  "failedRecords": 15,
+  "generated": "Fri Aug 15 21:13:38 UTC 2025",
+  "totalRecords": 238,
+  "recentRecords": 238,
+  "failedRecords": 16,
   "timeRange": "24 hours",
-  "workflowRun": "212",
+  "workflowRun": "213",
   "repository": "rohanojha-wm/crawler2",
   "version": "1.0.0",
   "endpoints": {
