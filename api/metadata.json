@@ -1,8 +1,17 @@
 {
-  "generated": "Fri Aug 15 20:28:16 UTC 2025",
-  "totalRecords": 199,
+  "generated": "Fri Aug 15 20:41:35 UTC 2025",
+  "totalRecords": 212,
+  "recentRecords": 212,
+  "failedRecords": 14,
   "timeRange": "24 hours",
-  "workflowRun": "209",
+  "workflowRun": "210",
   "repository": "rohanojha-wm/crawler2",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "endpoints": {
+    "results": "/api/results.json",
+    "stats": "/api/stats.json", 
+    "failedRequests": "/api/failed-requests.json",
+    "groupHierarchy": "/api/group-hierarchy.json",
+    "metadata": "/api/metadata.json"
+  }
 }
