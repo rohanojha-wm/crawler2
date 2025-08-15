@@ -113,8 +113,8 @@ class HeadlessApplication {
                 const result: RequestResult = {
                     url: urlConfig.url,
                     name: urlConfig.name,
-                    countryCode: urlConfig.countryCode,
-                    group_name: urlConfig.group_name,
+                    countryCode: urlConfig.countryCode || undefined,
+                    group_name: urlConfig.group_name || undefined,
                     timestamp: new Date().toISOString(),
                     status: response.status,
                     responseTime,
@@ -131,8 +131,8 @@ class HeadlessApplication {
                 const result: RequestResult = {
                     url: urlConfig.url,
                     name: urlConfig.name,
-                    countryCode: urlConfig.countryCode,
-                    group_name: urlConfig.group_name,
+                    countryCode: urlConfig.countryCode || undefined,
+                    group_name: urlConfig.group_name || undefined,
                     timestamp: new Date().toISOString(),
                     status: 0,
                     responseTime,

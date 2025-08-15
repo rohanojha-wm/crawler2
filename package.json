@@ -12,8 +12,7 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "monitor": "npm run headless",
-    "dashboard": "npm start",
-    "check-config": "node -e \"console.log('Checking configuration...'); require('./dist/config-loader').ConfigLoader.loadFromCSV('urls.csv').then(c => console.log('✅ Config valid:', c.urls.length, 'URLs')).catch(e => { console.error('❌ Config error:', e.message); process.exit(1); })\""
+    "dashboard": "npm start"
   },
   "keywords": [
     "url-monitoring",
@@ -21,9 +20,7 @@
     "sqlite",
     "express",
     "chart.js",
-    "github-actions",
-    "headless",
-    "ci-cd"
+    "github-actions"
   ],
   "author": "URL Monitor",
   "license": "MIT",
@@ -40,13 +37,5 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/yourusername/url-monitor.git"
-  },
-  "bugs": {
-    "url": "https://github.com/yourusername/url-monitor/issues"
-  },
-  "homepage": "https://github.com/yourusername/url-monitor#readme"
+  }
 }

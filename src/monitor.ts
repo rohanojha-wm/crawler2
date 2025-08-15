@@ -78,8 +78,8 @@ export class Monitor {
             result = {
                 url: config.url,
                 name: config.name,
-                countryCode: config.countryCode,
-                group_name: config.group_name,
+                countryCode: config.countryCode || undefined,
+                group_name: config.group_name || undefined,
                 timestamp: new Date().toISOString(),
                 status: response.status,
                 responseTime,
@@ -95,8 +95,8 @@ export class Monitor {
             result = {
                 url: config.url,
                 name: config.name,
-                countryCode: config.countryCode,
-                group_name: config.group_name,
+                countryCode: config.countryCode || undefined,
+                group_name: config.group_name || undefined,
                 timestamp: new Date().toISOString(),
                 status: 0,
                 responseTime,
