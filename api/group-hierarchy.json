@@ -23,33 +23,15 @@
     "urls": [
       {
         "url": "https://www.discoveryplus.com",
-        "name": "D+ Homepage"
+        "name": "Homepage"
       },
       {
         "url": "https://www.discoveryplus.com/movies",
-        "name": "D+ Movie"
+        "name": "Movie"
       },
       {
         "url": "https://www.discoveryplus.com/shows",
-        "name": "D+ Show"
-      }
-    ]
-  },
-  {
-    "group_name": "Discovery Plus",
-    "countryCode": "US",
-    "urls": [
-      {
-        "url": "https://www.discoveryplus.com",
-        "name": "D+ Homepage"
-      },
-      {
-        "url": "https://www.discoveryplus.com/movies",
-        "name": "D+ Movie"
-      },
-      {
-        "url": "https://www.discoveryplus.com/shows",
-        "name": "D+ Show"
+        "name": "Show"
       }
     ]
   },
@@ -90,24 +72,6 @@
       {
         "url": "https://www.max.com/shows",
         "name": "Show"
-      }
-    ]
-  },
-  {
-    "group_name": "Max Streaming",
-    "countryCode": "US",
-    "urls": [
-      {
-        "url": "https://www.max.com",
-        "name": "US Homepage Max"
-      },
-      {
-        "url": "https://www.max.com/movies",
-        "name": "US Movie"
-      },
-      {
-        "url": "https://www.max.com/shows",
-        "name": "US Show"
       }
     ]
   }
