@@ -1,4 +1,5 @@
-[{"id":120277,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T19:18:39.008Z","status":404,"responseTime":653,"error":"HTTP 404","errorDescription":"HTTP 404"},
+[{"id":120290,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T19:39:25.317Z","status":404,"responseTime":816,"error":"HTTP 404","errorDescription":"HTTP 404"},
+{"id":120277,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T19:18:39.008Z","status":404,"responseTime":653,"error":"HTTP 404","errorDescription":"HTTP 404"},
 {"id":120266,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T18:56:05.163Z","status":404,"responseTime":494,"error":"HTTP 404","errorDescription":"HTTP 404"},
 {"id":120251,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T18:27:57.215Z","status":404,"responseTime":880,"error":"HTTP 404","errorDescription":"HTTP 404"},
 {"id":120240,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-13T17:53:05.106Z","status":404,"responseTime":719,"error":"HTTP 404","errorDescription":"HTTP 404"},
@@ -44,5 +45,4 @@
 {"id":119721,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T20:47:16.946Z","status":404,"responseTime":805,"error":"HTTP 404","errorDescription":"HTTP 404"},
 {"id":119708,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T20:22:10.127Z","status":404,"responseTime":1025,"error":"HTTP 404","errorDescription":"HTTP 404"},
 {"id":119693,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T19:50:17.820Z","status":404,"responseTime":552,"error":"HTTP 404","errorDescription":"HTTP 404"},
-{"id":119682,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T19:40:55.357Z","status":404,"responseTime":1147,"error":"HTTP 404","errorDescription":"HTTP 404"},
-{"id":119666,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T19:20:52.131Z","status":404,"responseTime":749,"error":"HTTP 404","errorDescription":"HTTP 404"}]
+{"id":119682,"url":"https://www.max.com/rohan","name":"Failure","group_name":"Max","countryCode":"US","timestamp":"2026-01-12T19:40:55.357Z","status":404,"responseTime":1147,"error":"HTTP 404","errorDescription":"HTTP 404"}]
